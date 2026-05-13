@@ -76,11 +76,10 @@ def _register_nfc_event_listener(
     hass: HomeAssistant,
     runtime_data: dict[str, Any],
 ):
-    nfc_service: NfcEventService = runtime_data["nfc"]
-    completion_service: CompletionDomainService = runtime_data["completion"]
-
     @callback
     def _handle_nfc_scan(event: Event[dict[str, Any]]) -> None:
+        nfc_service: NfcEventService = runtime_data["nfc"]
+        completion_service: CompletionDomainService = runtime_data["completion"]
         event_data = event.data or {}
         tag_id = event_data.get("tag_id")
         actor_ha_user_id = event_data.get("actor_ha_user_id")
