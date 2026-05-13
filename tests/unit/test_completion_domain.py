@@ -2,7 +2,11 @@ from datetime import UTC, date, datetime
 
 import pytest
 
-from custom_components.ha_task_manager.exceptions import AssignmentViolationError
+from custom_components.ha_task_manager.exceptions import (
+    AssignmentViolationError,
+    InvalidCompletionTargetError,
+    UnmappedUserError,
+)
 from custom_components.ha_task_manager.models import (
     AttemptOutcome,
     CompletionRecord,
@@ -141,6 +145,78 @@ def test_blocked_assignment_attempt_is_written_to_audit_history(
     assert audit_records[0].task_id == task.id
     assert audit_records[0].actor_profile_id == "profile-sam"
     assert audit_records[0].outcome == AttemptOutcome.BLOCKED_ASSIGNMENT
+
+
+def test_mismatched_due_instance_is_rejected(
+    completion_domain_service: CompletionDomainService,
+) -> None:
+    task = build_task(assigned_profile_id="profile-alex")
+    due_instance = TaskDueInstance.build(
+        task_id="different-task",
+        due_date=date(2026, 5, 13),
+    )
+
+    with pytest.raises(InvalidCompletionTargetError):
+        completion_domain_service.confirm_completion(
+            task=task,
+            due_instance=due_instance,
+            actor_ha_user_id="ha-user-1",
+            source=CompletionSource.MANUAL,
+            completed_at=datetime(2026, 5, 13, 9, 10, tzinfo=UTC),
+        )
+
+    assert completion_domain_service.get_history() == []
+
+
+def test_skipped_due_instance_is_rejected(
+    completion_domain_service: CompletionDomainService,
+) -> None:
+    task = build_task(assigned_profile_id="profile-alex")
+    due_instance = TaskDueInstance.build(
+        task_id=task.id,
+        due_date=date(2026, 5, 13),
+        skipped=True,
+    )
+
+    with pytest.raises(InvalidCompletionTargetError):
+        completion_domain_service.confirm_completion(
+            task=task,
+            due_instance=due_instance,
+            actor_ha_user_id="ha-user-1",
+            source=CompletionSource.MANUAL,
+            completed_at=datetime(2026, 5, 13, 9, 15, tzinfo=UTC),
+        )
+
+    assert completion_domain_service.get_history() == []
+
+
+def test_unmapped_user_raises_and_writes_blocked_audit_record(
+    completion_domain_service: CompletionDomainService,
+) -> None:
+    task = build_task(assigned_profile_id="profile-alex")
+    due_instance = TaskDueInstance.build(
+        task_id=task.id,
+        due_date=date(2026, 5, 13),
+    )
+
+    with pytest.raises(UnmappedUserError):
+        completion_domain_service.confirm_completion(
+            task=task,
+            due_instance=due_instance,
+            actor_ha_user_id="missing-user",
+            source=CompletionSource.MANUAL,
+            completed_at=datetime(2026, 5, 13, 9, 20, tzinfo=UTC),
+        )
+
+    audit_records = completion_domain_service.get_audit_records()
+
+    assert len(audit_records) == 1
+    assert audit_records[0].task_id == task.id
+    assert audit_records[0].due_instance_id == due_instance.id
+    assert audit_records[0].actor_ha_user_id == "missing-user"
+    assert audit_records[0].actor_profile_id == ""
+    assert audit_records[0].outcome == AttemptOutcome.BLOCKED_NO_MAPPING
+    assert audit_records[0].blocked_reason != ""
 
 
 def test_completion_history_accessor_is_immutable_by_copy(

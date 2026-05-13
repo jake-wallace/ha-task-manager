@@ -5,7 +5,10 @@ from __future__ import annotations
 from collections.abc import Iterable
 from copy import deepcopy
 
-from custom_components.ha_task_manager.exceptions import UnmappedUserError
+from custom_components.ha_task_manager.exceptions import (
+    InvalidUserProfileMappingError,
+    UnmappedUserError,
+)
 from custom_components.ha_task_manager.models import (
     HouseholdProfile,
     UserProfileMapping,
@@ -23,9 +26,9 @@ class IdentityMappingService:
         self._profiles_by_id: dict[str, HouseholdProfile] = {
             profile.id: deepcopy(profile) for profile in profiles or []
         }
-        self._mappings_by_ha_user_id: dict[str, UserProfileMapping] = {
-            mapping.ha_user_id: deepcopy(mapping) for mapping in mappings or []
-        }
+        self._mappings_by_ha_user_id: dict[str, UserProfileMapping] = {}
+        for mapping in mappings or []:
+            self._store_mapping(mapping)
 
     def resolve_profile(self, ha_user_id: str) -> HouseholdProfile:
         """Return the mapped household profile for the provided HA user."""
@@ -58,4 +61,13 @@ class IdentityMappingService:
 
     def add_mapping(self, mapping: UserProfileMapping) -> None:
         """Add or replace a HA user to household profile mapping."""
+        self._store_mapping(mapping)
+
+    def _store_mapping(self, mapping: UserProfileMapping) -> None:
+        if mapping.profile_id not in self._profiles_by_id:
+            raise InvalidUserProfileMappingError(
+                ha_user_id=mapping.ha_user_id,
+                profile_id=mapping.profile_id,
+            )
+
         self._mappings_by_ha_user_id[mapping.ha_user_id] = deepcopy(mapping)

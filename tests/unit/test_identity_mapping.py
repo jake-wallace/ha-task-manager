@@ -2,7 +2,10 @@ from datetime import UTC, datetime
 
 import pytest
 
-from custom_components.ha_task_manager.exceptions import UnmappedUserError
+from custom_components.ha_task_manager.exceptions import (
+    InvalidUserProfileMappingError,
+    UnmappedUserError,
+)
 from custom_components.ha_task_manager.models import (
     HouseholdProfile,
     UserProfileMapping,
@@ -90,3 +93,16 @@ def test_is_mapped_reports_true_and_false(
 ) -> None:
     assert mapping_service.is_mapped("ha-user-1") is True
     assert mapping_service.is_mapped("missing-user") is False
+
+
+def test_add_mapping_for_nonexistent_profile_is_rejected() -> None:
+    service = IdentityMappingService()
+    mapping = UserProfileMapping(
+        id="mapping-3",
+        ha_user_id="ha-user-3",
+        profile_id="missing-profile",
+        created_at=datetime(2026, 5, 13, tzinfo=UTC),
+    )
+
+    with pytest.raises(InvalidUserProfileMappingError):
+        service.add_mapping(mapping)
