@@ -55,11 +55,6 @@ class TaskStore:
         """Load raw completion history payloads."""
         return await self._completions_store.async_load() or []
 
-    async def async_save_completions(self, data: list[dict[str, Any]]) -> None:
-        """Persist the full raw completion history payload list."""
-        async with self._completions_lock:
-            await self._completions_store.async_save(data)
-
     async def async_append_completion(self, record: dict[str, Any]) -> None:
         """Append one raw completion or audit payload."""
         async with self._completions_lock:
