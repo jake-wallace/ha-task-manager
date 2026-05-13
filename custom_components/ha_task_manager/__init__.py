@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import date
 from typing import Any
@@ -211,6 +212,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         "completion": completion_domain_service,
         "nfc": nfc_event_service,
         "analytics": analytics_service,
+        "task_save_lock": asyncio.Lock(),
     }
     runtime_data[_NFC_LISTENER_UNSUBSCRIBE] = _register_nfc_event_listener(
         hass,

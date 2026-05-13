@@ -588,27 +588,33 @@ def async_register_websocket_api(hass: HomeAssistant) -> None:
             connection.send_error(msg["id"], "invalid_task", str(err))
             return
 
-        tasks = await _load_tasks(store)
-        tag_mappings = await _load_tag_mappings(store)
-        try:
-            _validate_unique_nfc_tag(task, tasks, tag_mappings)
-        except ValueError as err:
-            connection.send_error(msg["id"], "invalid_task", str(err))
-            return
+        async with runtime_data["task_save_lock"]:
+            tasks = await _load_tasks(store)
+            tag_mappings = await _load_tag_mappings(store)
+            try:
+                _validate_unique_nfc_tag(task, tasks, tag_mappings)
+            except ValueError as err:
+                connection.send_error(msg["id"], "invalid_task", str(err))
+                return
 
-        stored_tasks = [existing for existing in tasks if existing.id != task.id]
-        stored_tasks.append(task)
+            stored_tasks = [existing for existing in tasks if existing.id != task.id]
+            stored_tasks.append(task)
 
-        await store.async_save_tasks(
-            {"tasks": [task_definition_to_dict(existing) for existing in stored_tasks]}
-        )
+            await store.async_save_tasks(
+                {
+                    "tasks": [
+                        task_definition_to_dict(existing)
+                        for existing in stored_tasks
+                    ]
+                }
+            )
 
-        tag_mappings = await _sync_task_nfc_mappings(store, task)
-        _rebuild_nfc_service(
-            runtime_data,
-            tasks=stored_tasks,
-            tag_mappings=tag_mappings,
-        )
+            tag_mappings = await _sync_task_nfc_mappings(store, task)
+            _rebuild_nfc_service(
+                runtime_data,
+                tasks=stored_tasks,
+                tag_mappings=tag_mappings,
+            )
 
         connection.send_result(msg["id"], task_definition_to_dict(task))
 
