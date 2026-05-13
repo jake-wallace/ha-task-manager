@@ -18,6 +18,10 @@ from custom_components.ha_task_manager.models import (
 class TaskDomainService:
     """Task recurrence projection and due-instance selection service."""
 
+    def validate_task(self, task: TaskDefinition) -> None:
+        """Validate a task definition before persistence or projection."""
+        _validate_task(task)
+
     def project_due_instances(
         self,
         task: TaskDefinition,
@@ -28,7 +32,7 @@ class TaskDomainService:
         if horizon_days <= 0:
             return []
 
-        _validate_task(task)
+        self.validate_task(task)
 
         start_date = max(from_date, task.start_date)
         end_date = from_date + timedelta(days=horizon_days - 1)

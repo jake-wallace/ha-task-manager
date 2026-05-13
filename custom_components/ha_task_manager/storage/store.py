@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 from homeassistant.core import HomeAssistant
@@ -20,6 +21,7 @@ class TaskStore:
     """Persist raw serializable task-manager data structures."""
 
     def __init__(self, hass: HomeAssistant) -> None:
+        self._completions_lock = asyncio.Lock()
         self._tasks_store: Store[dict[str, Any]] = Store(
             hass,
             STORAGE_VERSION,
@@ -55,13 +57,15 @@ class TaskStore:
 
     async def async_save_completions(self, data: list[dict[str, Any]]) -> None:
         """Persist the full raw completion history payload list."""
-        await self._completions_store.async_save(data)
+        async with self._completions_lock:
+            await self._completions_store.async_save(data)
 
     async def async_append_completion(self, record: dict[str, Any]) -> None:
         """Append one raw completion or audit payload."""
-        history = await self.async_load_completions()
-        history.append(record)
-        await self.async_save_completions(history)
+        async with self._completions_lock:
+            history = await self._completions_store.async_load() or []
+            history.append(record)
+            await self._completions_store.async_save(history)
 
     async def async_load_profiles(self) -> dict[str, Any]:
         """Load raw profile and mapping payloads."""

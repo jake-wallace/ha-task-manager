@@ -218,3 +218,38 @@ async def test_phone_nfc_scan_uses_rebuilt_runtime_service_after_task_save(
         pending_response["result"][0]["due_instance_id"]
         == "task-bathroom:2026-05-10"
     )
+
+
+async def test_save_task_rejects_invalid_recurrence_payload(
+    enable_custom_integrations,
+    hass,
+    hass_ws_client,
+) -> None:
+    store = TaskStore(hass)
+    await store.async_save_tasks({"tasks": []})
+
+    entry = MockConfigEntry(domain=DOMAIN, title="Task Manager")
+    entry.add_to_hass(hass)
+
+    assert await hass.config_entries.async_setup(entry.entry_id)
+
+    client = await hass_ws_client(hass)
+    invalid_task = _task_payload()
+    invalid_task["recurrence"] = {
+        "frequency": "monthly",
+        "days_of_week": [],
+        "interval_days": 1,
+        "day_of_month": None,
+    }
+
+    await client.send_json_auto_id(
+        {
+            "type": "ha_task_manager/save_task",
+            "task": invalid_task,
+        }
+    )
+    response = await client.receive_json()
+
+    assert response["success"] is False
+    assert response["error"]["code"] == "invalid_task"
+    assert await store.async_load_tasks() == {"tasks": []}

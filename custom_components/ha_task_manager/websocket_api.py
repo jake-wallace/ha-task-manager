@@ -295,9 +295,11 @@ def _rebuild_nfc_service(
     tasks: list[TaskDefinition],
     tag_mappings: list[NfcTagMapping],
 ) -> None:
+    existing_nfc_service: NfcEventService = runtime_data["nfc"]
     runtime_data["nfc"] = NfcEventService(
         tag_mappings=tag_mappings,
         tasks=tasks,
+        pending_attempts=existing_nfc_service.get_pending_confirmations(),
         task_domain_service=runtime_data["task_domain"],
     )
 
@@ -404,7 +406,15 @@ def async_register_websocket_api(hass: HomeAssistant, entry_id: str) -> None:
     ) -> None:
         runtime_data = hass.data[DOMAIN][entry_id]
         store: TaskStore = runtime_data["store"]
-        task = task_definition_from_dict(msg["task"])
+        task_domain = runtime_data["task_domain"]
+
+        try:
+            task = task_definition_from_dict(msg["task"])
+            task_domain.validate_task(task)
+        except (TaskManagerError, TypeError, ValueError) as err:
+            connection.send_error(msg["id"], "invalid_task", str(err))
+            return
+
         tasks = await _load_tasks(store)
         stored_tasks = [existing for existing in tasks if existing.id != task.id]
         stored_tasks.append(task)
@@ -455,6 +465,7 @@ def async_register_websocket_api(hass: HomeAssistant, entry_id: str) -> None:
             None,
         )
         if task is None:
+            nfc_service.dismiss_confirmation(attempt.id)
             connection.send_error(
                 msg["id"],
                 "task_not_found",
@@ -465,6 +476,7 @@ def async_register_websocket_api(hass: HomeAssistant, entry_id: str) -> None:
         try:
             due_instance = _due_instance_from_id(task.id, attempt.due_instance_id)
         except ValueError as err:
+            nfc_service.dismiss_confirmation(attempt.id)
             connection.send_error(msg["id"], "invalid_due_instance", str(err))
             return
 
@@ -488,6 +500,7 @@ def async_register_websocket_api(hass: HomeAssistant, entry_id: str) -> None:
                 recorded_payload = completion_record_to_dict(updated_history[-1])
                 await store.async_append_completion(recorded_payload)
                 hass.bus.async_fire(EVENT_COMPLETION_RECORDED, recorded_payload)
+            nfc_service.dismiss_confirmation(attempt.id)
             connection.send_error(msg["id"], "confirm_completion_failed", str(err))
             return
 

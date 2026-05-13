@@ -27,6 +27,7 @@ class NfcEventService:
         self,
         tag_mappings: Iterable[NfcTagMapping] | None = None,
         tasks: Iterable[TaskDefinition] | None = None,
+        pending_attempts: Iterable[CompletionAttempt] | None = None,
         task_domain_service: TaskDomainService | None = None,
     ) -> None:
         self._tag_to_task_id: dict[str, str] = {}
@@ -38,6 +39,8 @@ class NfcEventService:
             self.register_task(task)
         for mapping in tag_mappings or []:
             self.register_tag_mapping(mapping)
+        for attempt in pending_attempts or []:
+            self._pending_attempts[attempt.id] = deepcopy(attempt)
 
     def resolve_tag(self, tag_id: str) -> TaskDefinition:
         """Return the task mapped to the NFC tag."""
