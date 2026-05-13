@@ -936,8 +936,6 @@ def async_register_websocket_api(hass: HomeAssistant) -> None:
         history = await _load_history(store)
         projected_due_instances: list[TaskDueInstance] = []
         for task in tasks:
-            if not task.active:
-                continue
             projected_due_instances.extend(
                 task_domain.project_due_instances(
                     task=task,
@@ -947,7 +945,7 @@ def async_register_websocket_api(hass: HomeAssistant) -> None:
             )
 
         task_assignments = {
-            task.id: task.assigned_profile_id for task in tasks if task.active
+            task.id: task.assigned_profile_id for task in tasks
         }
         snapshot = analytics_service.compute_snapshot(
             profile_id=msg["profile_id"],

@@ -45,15 +45,14 @@ class AnalyticsService:
         )
         daily_completions = sorted(daily_counts.items())
 
-        due_instances_by_id = {instance.id: instance for instance in due_instances}
         on_time_count = 0
         late_count = 0
         for record in confirmed_profile_records:
-            due_instance = due_instances_by_id.get(record.due_instance_id)
-            if due_instance is None:
+            due_date = self._due_date_from_due_instance_id(record.due_instance_id)
+            if due_date is None:
                 continue
 
-            if record.completed_at.date() <= due_instance.due_date:
+            if record.completed_at.date() <= due_date:
                 on_time_count += 1
             else:
                 late_count += 1
@@ -82,6 +81,13 @@ class AnalyticsService:
             current_streak=self._compute_current_streak(completion_days, as_of),
             longest_streak=self._compute_longest_streak(completion_days),
         )
+
+    def _due_date_from_due_instance_id(self, due_instance_id: str) -> date | None:
+        try:
+            _task_id, raw_due_date = due_instance_id.rsplit(":", 1)
+            return date.fromisoformat(raw_due_date)
+        except ValueError:
+            return None
 
     def _compute_current_streak(
         self,

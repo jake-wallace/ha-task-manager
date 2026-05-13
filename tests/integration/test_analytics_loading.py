@@ -275,3 +275,89 @@ async def test_profiles_returns_profile_list_contract(
             "created_at": "2026-05-10T00:00:00+00:00",
         }
     ]
+
+
+async def test_analytics_keeps_historical_kpis_for_paused_tasks(
+    enable_custom_integrations,
+    hass,
+    hass_ws_client,
+) -> None:
+    store = TaskStore(hass)
+    await store.async_save_tasks(
+        {
+            "tasks": [
+                {
+                    "id": "task-dishes",
+                    "title": "Wash dishes",
+                    "description": "",
+                    "recurrence": {
+                        "frequency": "daily",
+                        "days_of_week": [],
+                        "interval_days": 1,
+                        "day_of_month": None,
+                    },
+                    "skip_windows": [],
+                    "assigned_profile_id": "profile-alice",
+                    "nfc_tag_id": None,
+                    "active": False,
+                    "start_date": "2026-05-10",
+                    "created_at": "2026-05-10T00:00:00+00:00",
+                    "updated_at": "2026-05-14T00:00:00+00:00",
+                }
+            ]
+        }
+    )
+    await store.async_save_profiles(
+        {
+            "profiles": [
+                {
+                    "id": "profile-alice",
+                    "display_name": "Alice",
+                    "avatar_url": "",
+                    "created_at": "2026-05-10T00:00:00+00:00",
+                }
+            ],
+            "mappings": [
+                {
+                    "id": "mapping-alice",
+                    "ha_user_id": "ha-alice",
+                    "profile_id": "profile-alice",
+                    "created_at": "2026-05-10T00:00:00+00:00",
+                }
+            ],
+        }
+    )
+    await store.async_append_completion(
+        {
+            "id": "completion-1",
+            "task_id": "task-dishes",
+            "due_instance_id": "task-dishes:2026-05-10",
+            "completed_at": "2026-05-10T08:00:00+00:00",
+            "actor_ha_user_id": "ha-alice",
+            "actor_profile_id": "profile-alice",
+            "source": "manual",
+            "outcome": "confirmed",
+            "blocked_reason": "",
+        }
+    )
+
+    entry = MockConfigEntry(domain=DOMAIN, title="Task Manager")
+    entry.add_to_hass(hass)
+
+    assert await hass.config_entries.async_setup(entry.entry_id)
+
+    client = await hass_ws_client(hass)
+    await client.send_json_auto_id(
+        {
+            "type": "ha_task_manager/analytics",
+            "profile_id": "profile-alice",
+            "as_of": "2026-05-13",
+            "horizon_days": 4,
+        }
+    )
+    response = await client.receive_json()
+
+    assert response["success"] is True
+    assert response["result"]["on_time_count"] == 1
+    assert response["result"]["late_count"] == 0
+    assert response["result"]["missed_count"] == 2
