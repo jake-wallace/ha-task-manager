@@ -6,6 +6,7 @@ import pytest
 from custom_components.ha_task_manager.models import (
     ProfileAnalyticsSnapshot,
     SkipWindow,
+    TaskDefinition,
     TaskDueInstance,
 )
 from custom_components.ha_task_manager.models.time import utc_now
@@ -49,3 +50,9 @@ def test_profile_analytics_snapshot_daily_completions_uses_date_buckets() -> Non
     hints = get_type_hints(ProfileAnalyticsSnapshot)
 
     assert hints["daily_completions"] == list[tuple[date, int]]
+
+
+def test_task_definition_exposes_date_only_schedule_anchor() -> None:
+    hints = get_type_hints(TaskDefinition)
+
+    assert hints["start_date"] == date

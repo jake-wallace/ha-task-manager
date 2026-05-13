@@ -57,6 +57,7 @@ class TaskDefinition:
     assigned_profile_id: str = ""
     nfc_tag_id: str | None = None
     active: bool = True
+    start_date: date = field(default_factory=lambda: utc_now().date())
     created_at: datetime = field(default_factory=utc_now)
     updated_at: datetime = field(default_factory=utc_now)
 

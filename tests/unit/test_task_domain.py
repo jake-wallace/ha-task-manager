@@ -18,8 +18,9 @@ def build_task(
     task_id: str = "task-123",
     skip_windows: list[SkipWindow] | None = None,
     created_at: datetime = datetime(2026, 5, 1, tzinfo=UTC),
+    start_date: date | None = None,
 ) -> TaskDefinition:
-    return TaskDefinition(
+    task = TaskDefinition(
         id=task_id,
         title="Test Task",
         recurrence=recurrence,
@@ -27,6 +28,8 @@ def build_task(
         created_at=created_at,
         updated_at=created_at,
     )
+    task.start_date = start_date or created_at.date()
+    return task
 
 
 @pytest.fixture(name="task_domain_service")
@@ -114,6 +117,56 @@ def test_daily_recurrence_produces_consecutive_dates(
     ]
 
 
+def test_daily_recurrence_honors_interval_days(
+    task_domain_service: TaskDomainService,
+) -> None:
+    task = build_task(
+        RecurrenceRule(
+            frequency=RecurrenceFrequency.DAILY,
+            interval_days=2,
+        )
+    )
+
+    instances = task_domain_service.project_due_instances(
+        task=task,
+        from_date=date(2026, 5, 1),
+        horizon_days=6,
+    )
+
+    assert [instance.due_date for instance in instances] == [
+        date(2026, 5, 1),
+        date(2026, 5, 3),
+        date(2026, 5, 5),
+    ]
+
+
+def test_projection_uses_start_date_instead_of_created_at_date(
+    task_domain_service: TaskDomainService,
+) -> None:
+    task = build_task(
+        RecurrenceRule(
+            frequency=RecurrenceFrequency.DAILY,
+            interval_days=1,
+        ),
+        created_at=datetime(2026, 5, 10, tzinfo=UTC),
+        start_date=date(2026, 5, 1),
+    )
+
+    instances = task_domain_service.project_due_instances(
+        task=task,
+        from_date=date(2026, 5, 1),
+        horizon_days=5,
+    )
+
+    assert [instance.due_date for instance in instances] == [
+        date(2026, 5, 1),
+        date(2026, 5, 2),
+        date(2026, 5, 3),
+        date(2026, 5, 4),
+        date(2026, 5, 5),
+    ]
+
+
 def test_custom_interval_recurrence_works(
     task_domain_service: TaskDomainService,
 ) -> None:
@@ -135,6 +188,31 @@ def test_custom_interval_recurrence_works(
         date(2026, 5, 4),
         date(2026, 5, 7),
         date(2026, 5, 10),
+    ]
+
+
+def test_custom_interval_recurrence_anchors_to_start_date(
+    task_domain_service: TaskDomainService,
+) -> None:
+    task = build_task(
+        RecurrenceRule(
+            frequency=RecurrenceFrequency.CUSTOM_DAYS,
+            interval_days=3,
+        ),
+        created_at=datetime(2026, 5, 1, 12, 0, tzinfo=UTC),
+        start_date=date(2026, 5, 2),
+    )
+
+    instances = task_domain_service.project_due_instances(
+        task=task,
+        from_date=date(2026, 5, 1),
+        horizon_days=8,
+    )
+
+    assert [instance.due_date for instance in instances] == [
+        date(2026, 5, 2),
+        date(2026, 5, 5),
+        date(2026, 5, 8),
     ]
 
 
@@ -235,8 +313,8 @@ def test_actionable_selection_picks_oldest_open_overdue_or_today_instance(
     )
 
     assert actionable is not None
-    assert actionable.due_date == date(2026, 5, 2)
-    assert actionable.id == "task-123:2026-05-02"
+    assert actionable.due_date == date(2026, 5, 1)
+    assert actionable.id == "task-123:2026-05-01"
 
 
 def test_actionable_selection_falls_forward_to_next_future_instance(
@@ -252,6 +330,7 @@ def test_actionable_selection_falls_forward_to_next_future_instance(
     actionable = task_domain_service.select_actionable_due_instance(
         task=task,
         completed_due_instance_ids={
+            "task-123:2026-05-01",
             "task-123:2026-05-02",
             "task-123:2026-05-03",
             "task-123:2026-05-04",
@@ -298,3 +377,28 @@ def test_actionable_selection_ignores_skipped_and_completed_instances(
     assert actionable is not None
     assert actionable.due_date == date(2026, 5, 5)
     assert actionable.skipped is False
+
+
+def test_actionable_selection_returns_oldest_open_due_even_beyond_lookback(
+    task_domain_service: TaskDomainService,
+) -> None:
+    task = build_task(
+        RecurrenceRule(
+            frequency=RecurrenceFrequency.DAILY,
+            interval_days=1,
+        ),
+        start_date=date(2026, 3, 1),
+        created_at=datetime(2026, 5, 1, tzinfo=UTC),
+    )
+
+    actionable = task_domain_service.select_actionable_due_instance(
+        task=task,
+        completed_due_instance_ids=set(),
+        as_of=date(2026, 5, 13),
+        lookback_days=30,
+        horizon_days=14,
+    )
+
+    assert actionable is not None
+    assert actionable.due_date == date(2026, 3, 1)
+    assert actionable.id == "task-123:2026-03-01"

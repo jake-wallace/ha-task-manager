@@ -30,7 +30,7 @@ class TaskDomainService:
 
         _validate_task(task)
 
-        start_date = max(from_date, task.created_at.date())
+        start_date = max(from_date, task.start_date)
         end_date = from_date + timedelta(days=horizon_days - 1)
 
         if start_date > end_date:
@@ -54,10 +54,10 @@ class TaskDomainService:
         horizon_days: int = 60,
     ) -> TaskDueInstance | None:
         """Return the next due instance that should be acted on, if any."""
-        normalized_lookback = max(lookback_days, 0)
         normalized_horizon = max(horizon_days, 0)
-        search_start = as_of - timedelta(days=normalized_lookback)
-        search_span = normalized_lookback + normalized_horizon + 1
+        search_start = task.start_date
+        search_end = max(as_of, task.start_date) + timedelta(days=normalized_horizon)
+        search_span = (search_end - search_start).days + 1
 
         projected_instances = self.project_due_instances(
             task=task,
@@ -131,12 +131,17 @@ def _expand_due_dates(
     rule = task.recurrence
 
     if rule.frequency == RecurrenceFrequency.DAILY:
-        return _expand_daily(start_date, end_date)
+        return _expand_daily(
+            anchor_date=task.start_date,
+            start_date=start_date,
+            end_date=end_date,
+            interval_days=rule.interval_days,
+        )
     if rule.frequency == RecurrenceFrequency.WEEKLY:
         return _expand_weekly(start_date, end_date, rule.days_of_week)
     if rule.frequency == RecurrenceFrequency.CUSTOM_DAYS:
         return _expand_custom_days(
-            anchor_date=task.created_at.date(),
+            anchor_date=task.start_date,
             start_date=start_date,
             end_date=end_date,
             interval_days=rule.interval_days,
@@ -147,15 +152,18 @@ def _expand_due_dates(
     raise InvalidRecurrenceError("Unsupported recurrence frequency.")
 
 
-def _expand_daily(start_date: date, end_date: date) -> list[date]:
-    current = start_date
-    results: list[date] = []
-
-    while current <= end_date:
-        results.append(current)
-        current += timedelta(days=1)
-
-    return results
+def _expand_daily(
+    anchor_date: date,
+    start_date: date,
+    end_date: date,
+    interval_days: int,
+) -> list[date]:
+    return _expand_interval_days(
+        anchor_date=anchor_date,
+        start_date=start_date,
+        end_date=end_date,
+        interval_days=interval_days,
+    )
 
 
 def _expand_weekly(
@@ -176,6 +184,20 @@ def _expand_weekly(
 
 
 def _expand_custom_days(
+    anchor_date: date,
+    start_date: date,
+    end_date: date,
+    interval_days: int,
+) -> list[date]:
+    return _expand_interval_days(
+        anchor_date=anchor_date,
+        start_date=start_date,
+        end_date=end_date,
+        interval_days=interval_days,
+    )
+
+
+def _expand_interval_days(
     anchor_date: date,
     start_date: date,
     end_date: date,
