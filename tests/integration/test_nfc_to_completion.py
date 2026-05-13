@@ -2,7 +2,11 @@ from __future__ import annotations
 
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-from custom_components.ha_task_manager.const import DOMAIN, EVENT_NFC_SCANNED
+from custom_components.ha_task_manager.const import (
+    DOMAIN,
+    EVENT_NFC_SCANNED,
+    EVENT_NFC_TAG_MAPPING_REQUESTED,
+)
 from custom_components.ha_task_manager.storage.store import TaskStore
 
 
@@ -253,3 +257,138 @@ async def test_save_task_rejects_invalid_recurrence_payload(
     assert response["success"] is False
     assert response["error"]["code"] == "invalid_task"
     assert await store.async_load_tasks() == {"tasks": []}
+
+
+async def test_unknown_nfc_tag_emits_mapping_request_event(
+    enable_custom_integrations,
+    hass,
+) -> None:
+    entry = MockConfigEntry(domain=DOMAIN, title="Task Manager")
+    entry.add_to_hass(hass)
+
+    assert await hass.config_entries.async_setup(entry.entry_id)
+
+    captured_events = []
+    hass.bus.async_listen(
+        EVENT_NFC_TAG_MAPPING_REQUESTED,
+        lambda event: captured_events.append(event.data),
+    )
+
+    hass.bus.async_fire(
+        EVENT_NFC_SCANNED,
+        {
+            "tag_id": "unknown-tag",
+            "actor_ha_user_id": "ha-alice",
+            "source": "phone",
+        },
+    )
+    await hass.async_block_till_done()
+
+    assert captured_events == [
+        {
+            "tag_id": "unknown-tag",
+            "actor_ha_user_id": "ha-alice",
+            "source": "nfc_phone",
+        }
+    ]
+
+
+async def test_stale_pending_confirmation_is_rejected_after_task_edit(
+    enable_custom_integrations,
+    hass,
+    hass_ws_client,
+) -> None:
+    store = TaskStore(hass)
+    original_task = _task_payload()
+    await store.async_save_tasks({"tasks": [original_task]})
+    await store.async_save_profiles(
+        {
+            "profiles": [
+                {
+                    "id": "profile-alice",
+                    "display_name": "Alice",
+                    "avatar_url": "",
+                    "created_at": "2026-05-10T00:00:00+00:00",
+                }
+            ],
+            "mappings": [
+                {
+                    "id": "mapping-alice",
+                    "ha_user_id": "ha-alice",
+                    "profile_id": "profile-alice",
+                    "created_at": "2026-05-10T00:00:00+00:00",
+                }
+            ],
+        }
+    )
+    await store.async_save_nfc(
+        {
+            "tag_mappings": [
+                {
+                    "id": "nfc-map-1",
+                    "tag_id": "tag-phone-1",
+                    "task_id": "task-bathroom",
+                    "label": "Bathroom tag",
+                    "created_at": "2026-05-10T00:00:00+00:00",
+                }
+            ]
+        }
+    )
+
+    entry = MockConfigEntry(domain=DOMAIN, title="Task Manager")
+    entry.add_to_hass(hass)
+
+    assert await hass.config_entries.async_setup(entry.entry_id)
+
+    hass.bus.async_fire(
+        EVENT_NFC_SCANNED,
+        {
+            "tag_id": "tag-phone-1",
+            "actor_ha_user_id": "ha-alice",
+            "source": "phone",
+            "as_of": "2026-05-10",
+        },
+    )
+    await hass.async_block_till_done()
+
+    client = await hass_ws_client(hass)
+    await client.send_json_auto_id({"type": "ha_task_manager/pending_confirmations"})
+    pending_response = await client.receive_json()
+
+    assert pending_response["success"] is True
+    attempt_id = pending_response["result"][0]["id"]
+
+    edited_task = _task_payload()
+    edited_task["recurrence"] = {
+        "frequency": "weekly",
+        "days_of_week": [2],
+        "interval_days": 1,
+        "day_of_month": None,
+    }
+    edited_task["updated_at"] = "2026-05-11T00:00:00+00:00"
+    await client.send_json_auto_id(
+        {
+            "type": "ha_task_manager/save_task",
+            "task": edited_task,
+        }
+    )
+    save_response = await client.receive_json()
+
+    assert save_response["success"] is True
+
+    await client.send_json_auto_id(
+        {
+            "type": "ha_task_manager/confirm_completion",
+            "attempt_id": attempt_id,
+        }
+    )
+    confirm_response = await client.receive_json()
+
+    assert confirm_response["success"] is False
+    assert confirm_response["error"]["code"] == "invalid_due_instance"
+
+    await client.send_json_auto_id({"type": "ha_task_manager/pending_confirmations"})
+    cleared_response = await client.receive_json()
+
+    assert cleared_response["success"] is True
+    assert cleared_response["result"] == []

@@ -10,8 +10,8 @@ from homeassistant.components import websocket_api
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import config_validation as cv
 
-from .const import DOMAIN, EVENT_COMPLETION_RECORDED
-from .exceptions import TaskManagerError
+from .const import DOMAIN, EVENT_COMPLETION_RECORDED, EVENT_USER_MAPPING_WARNING
+from .exceptions import TaskManagerError, UnmappedUserError
 from .models import (
     AttemptOutcome,
     CompletionAttempt,
@@ -240,17 +240,38 @@ def analytics_snapshot_to_dict(
     }
 
 
-def _due_instance_from_id(task_id: str, due_instance_id: str) -> TaskDueInstance:
+def _resolve_due_instance(
+    task_domain,
+    *,
+    task: TaskDefinition,
+    due_instance_id: str,
+) -> TaskDueInstance:
     raw_task_id, raw_due_date = due_instance_id.rsplit(":", 1)
-    due_instance = TaskDueInstance.build(
-        task_id=task_id,
-        due_date=_parse_date(raw_due_date),
-    )
-    if raw_task_id != task_id or due_instance.id != due_instance_id:
+    due_date = _parse_date(raw_due_date)
+    if raw_task_id != task.id:
         raise ValueError(
-            f"Invalid due instance id {due_instance_id!r} for task {task_id!r}"
+            f"Invalid due instance id {due_instance_id!r} for task {task.id!r}"
         )
-    return due_instance
+
+    projected_instances = task_domain.project_due_instances(
+        task=task,
+        from_date=due_date,
+        horizon_days=1,
+    )
+    matching_due_instance = next(
+        (
+            instance
+            for instance in projected_instances
+            if instance.id == due_instance_id
+        ),
+        None,
+    )
+    if matching_due_instance is None:
+        raise ValueError(
+            f"Due instance {due_instance_id!r} is no longer valid for task {task.id!r}"
+        )
+
+    return matching_due_instance
 
 
 async def _load_tasks(store: TaskStore) -> list[TaskDefinition]:
@@ -457,6 +478,7 @@ def async_register_websocket_api(hass: HomeAssistant, entry_id: str) -> None:
         store: TaskStore = runtime_data["store"]
         nfc_service = runtime_data["nfc"]
         completion_service = runtime_data["completion"]
+        task_domain = runtime_data["task_domain"]
 
         attempt = nfc_service.get_pending_confirmation(msg["attempt_id"])
         if attempt is None:
@@ -482,7 +504,11 @@ def async_register_websocket_api(hass: HomeAssistant, entry_id: str) -> None:
             return
 
         try:
-            due_instance = _due_instance_from_id(task.id, attempt.due_instance_id)
+            due_instance = _resolve_due_instance(
+                task_domain,
+                task=task,
+                due_instance_id=attempt.due_instance_id,
+            )
         except ValueError as err:
             nfc_service.dismiss_confirmation(attempt.id)
             connection.send_error(msg["id"], "invalid_due_instance", str(err))
@@ -514,8 +540,25 @@ def async_register_websocket_api(hass: HomeAssistant, entry_id: str) -> None:
                 recorded_payload = completion_record_to_dict(updated_history[-1])
                 await store.async_append_completion(recorded_payload)
                 hass.bus.async_fire(EVENT_COMPLETION_RECORDED, recorded_payload)
+            if isinstance(err, UnmappedUserError):
+                hass.bus.async_fire(
+                    EVENT_USER_MAPPING_WARNING,
+                    {
+                        "actor_ha_user_id": attempt.actor_ha_user_id,
+                        "task_id": attempt.task_id,
+                        "attempt_id": attempt.id,
+                    },
+                )
             nfc_service.dismiss_confirmation(attempt.id)
-            connection.send_error(msg["id"], "confirm_completion_failed", str(err))
+            connection.send_error(
+                msg["id"],
+                (
+                    "mapping_required"
+                    if isinstance(err, UnmappedUserError)
+                    else "confirm_completion_failed"
+                ),
+                str(err),
+            )
             return
 
         recorded_payload = completion_record_to_dict(completion_record)

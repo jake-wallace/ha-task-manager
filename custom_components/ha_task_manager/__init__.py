@@ -9,8 +9,13 @@ from typing import Any
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import Event, HomeAssistant, callback
 
-from .const import DOMAIN, EVENT_COMPLETION_REQUESTED, EVENT_NFC_SCANNED
-from .exceptions import TaskManagerError
+from .const import (
+    DOMAIN,
+    EVENT_COMPLETION_REQUESTED,
+    EVENT_NFC_SCANNED,
+    EVENT_NFC_TAG_MAPPING_REQUESTED,
+)
+from .exceptions import TaskManagerError, UnknownNfcTagError
 from .models import AttemptOutcome, CompletionSource
 from .panel import async_register_task_manager_panel
 from .services.analytics import AnalyticsService
@@ -120,6 +125,16 @@ def _register_nfc_event_listener(
                 ),
                 as_of=as_of,
             )
+        except UnknownNfcTagError:
+            hass.bus.async_fire(
+                EVENT_NFC_TAG_MAPPING_REQUESTED,
+                {
+                    "tag_id": tag_id,
+                    "actor_ha_user_id": actor_ha_user_id,
+                    "source": source.value,
+                },
+            )
+            return
         except TaskManagerError as err:
             _LOGGER.warning(
                 "Failed to initiate NFC confirmation for tag %s: %s",

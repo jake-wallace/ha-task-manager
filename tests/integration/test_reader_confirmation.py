@@ -2,7 +2,11 @@ from __future__ import annotations
 
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-from custom_components.ha_task_manager.const import DOMAIN, EVENT_NFC_SCANNED
+from custom_components.ha_task_manager.const import (
+    DOMAIN,
+    EVENT_NFC_SCANNED,
+    EVENT_USER_MAPPING_WARNING,
+)
 from custom_components.ha_task_manager.storage.store import TaskStore
 
 
@@ -176,6 +180,12 @@ async def test_failed_confirmation_dismisses_pending_attempt(
 
     assert await hass.config_entries.async_setup(entry.entry_id)
 
+    mapping_warning_events = []
+    hass.bus.async_listen(
+        EVENT_USER_MAPPING_WARNING,
+        lambda event: mapping_warning_events.append(event.data),
+    )
+
     hass.bus.async_fire(
         EVENT_NFC_SCANNED,
         {
@@ -203,7 +213,7 @@ async def test_failed_confirmation_dismisses_pending_attempt(
     confirm_response = await client.receive_json()
 
     assert confirm_response["success"] is False
-    assert confirm_response["error"]["code"] == "confirm_completion_failed"
+    assert confirm_response["error"]["code"] == "mapping_required"
 
     await client.send_json_auto_id({"type": "ha_task_manager/pending_confirmations"})
     cleared_response = await client.receive_json()
@@ -215,6 +225,13 @@ async def test_failed_confirmation_dismisses_pending_attempt(
 
     assert len(stored_history) == 1
     assert stored_history[0]["outcome"] == "blocked_no_mapping"
+    assert mapping_warning_events == [
+        {
+            "actor_ha_user_id": "reader-ha-alice",
+            "task_id": "task-trash",
+            "attempt_id": attempt_id,
+        }
+    ]
 
 
 async def test_invalid_completed_at_returns_structured_error(
