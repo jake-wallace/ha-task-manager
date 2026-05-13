@@ -49,6 +49,18 @@ class UnknownNfcTagError(TaskManagerError):
         super().__init__(f"No task mapping found for NFC tag {tag_id!r}")
 
 
+class NoActionableDueInstanceError(TaskManagerError):
+    """Raised when an NFC scan cannot target any actionable due instance."""
+
+    task_id: str
+
+    def __init__(self, task_id: str) -> None:
+        self.task_id = task_id
+        super().__init__(
+            f"Task {task_id!r} has no actionable due instance for NFC confirmation"
+        )
+
+
 class InvalidRecurrenceError(TaskManagerError):
     """Raised when a recurrence rule or skip window combination is invalid."""
 
