@@ -209,3 +209,22 @@ async def test_analytics_rejects_invalid_as_of(
 
     assert response["success"] is False
     assert response["error"]["code"] == "invalid_as_of"
+
+
+async def test_websocket_returns_clean_error_after_unload(
+    enable_custom_integrations,
+    hass,
+    hass_ws_client,
+) -> None:
+    entry = MockConfigEntry(domain=DOMAIN, title="Task Manager")
+    entry.add_to_hass(hass)
+
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    assert await hass.config_entries.async_unload(entry.entry_id)
+
+    client = await hass_ws_client(hass)
+    await client.send_json_auto_id({"type": "ha_task_manager/pending_confirmations"})
+    response = await client.receive_json()
+
+    assert response["success"] is False
+    assert response["error"]["code"] == "integration_unavailable"

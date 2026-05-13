@@ -38,6 +38,7 @@ _LOGGER = logging.getLogger(__name__)
 _PANEL_REGISTERED = "_panel_registered"
 _WEBSOCKET_REGISTERED = "_websocket_registered"
 _NFC_LISTENER_UNSUBSCRIBE = "_nfc_listener_unsubscribe"
+_ACTIVE_ENTRY_ID = "_active_entry_id"
 
 
 def _resolve_nfc_scan_source(raw_source: Any) -> CompletionSource | None:
@@ -216,9 +217,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         runtime_data,
     )
     domain_data[entry.entry_id] = runtime_data
+    domain_data[_ACTIVE_ENTRY_ID] = entry.entry_id
 
     if not domain_data.get(_WEBSOCKET_REGISTERED):
-        async_register_websocket_api(hass, entry.entry_id)
+        async_register_websocket_api(hass)
         domain_data[_WEBSOCKET_REGISTERED] = True
 
     if not domain_data.get(_PANEL_REGISTERED):
@@ -245,6 +247,8 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         for key, value in hass.data[DOMAIN].items()
         if not str(key).startswith("_")
     }
+    if remaining_entries:
+        hass.data[DOMAIN][_ACTIVE_ENTRY_ID] = next(iter(remaining_entries))
     if not remaining_entries:
         hass.data.pop(DOMAIN)
 

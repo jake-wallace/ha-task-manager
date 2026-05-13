@@ -246,6 +246,9 @@ def _resolve_due_instance(
     task: TaskDefinition,
     due_instance_id: str,
 ) -> TaskDueInstance:
+    if not task.active:
+        raise ValueError(f"Task {task.id!r} is inactive.")
+
     raw_task_id, raw_due_date = due_instance_id.rsplit(":", 1)
     due_date = _parse_date(raw_due_date)
     if raw_task_id != task.id:
@@ -272,6 +275,32 @@ def _resolve_due_instance(
         )
 
     return matching_due_instance
+
+
+def _filter_pending_confirmations(
+    runtime_data: dict[str, Any],
+    tasks: list[TaskDefinition],
+) -> list[CompletionAttempt]:
+    task_domain = runtime_data["task_domain"]
+    tasks_by_id = {task.id: task for task in tasks}
+    pending_attempts = runtime_data["nfc"].get_pending_confirmations()
+    valid_attempts: list[CompletionAttempt] = []
+
+    for attempt in pending_attempts:
+        task = tasks_by_id.get(attempt.task_id)
+        if task is None:
+            continue
+        try:
+            _resolve_due_instance(
+                task_domain,
+                task=task,
+                due_instance_id=attempt.due_instance_id,
+            )
+        except ValueError:
+            continue
+        valid_attempts.append(attempt)
+
+    return valid_attempts
 
 
 async def _load_tasks(store: TaskStore) -> list[TaskDefinition]:
@@ -316,17 +345,85 @@ def _rebuild_nfc_service(
     tasks: list[TaskDefinition],
     tag_mappings: list[NfcTagMapping],
 ) -> None:
-    existing_nfc_service: NfcEventService = runtime_data["nfc"]
     runtime_data["nfc"] = NfcEventService(
         tag_mappings=tag_mappings,
         tasks=tasks,
-        pending_attempts=existing_nfc_service.get_pending_confirmations(),
+        pending_attempts=_filter_pending_confirmations(runtime_data, tasks),
         task_domain_service=runtime_data["task_domain"],
     )
 
 
-def async_register_websocket_api(hass: HomeAssistant, entry_id: str) -> None:
+async def _sync_task_nfc_mappings(
+    store: TaskStore,
+    task: TaskDefinition,
+) -> list[NfcTagMapping]:
+    existing_mappings = await _load_tag_mappings(store)
+    updated_mappings = [
+        mapping for mapping in existing_mappings if mapping.task_id != task.id
+    ]
+
+    if task.nfc_tag_id:
+        updated_mappings = [
+            mapping
+            for mapping in updated_mappings
+            if mapping.tag_id != task.nfc_tag_id
+        ]
+        existing_mapping = next(
+            (
+                mapping
+                for mapping in existing_mappings
+                if mapping.task_id == task.id and mapping.tag_id == task.nfc_tag_id
+            ),
+            None,
+        )
+        updated_mappings.append(
+            existing_mapping
+            if existing_mapping is not None
+            else NfcTagMapping(
+                tag_id=task.nfc_tag_id,
+                task_id=task.id,
+                label=task.title,
+                created_at=task.updated_at,
+            )
+        )
+
+    await store.async_save_nfc(
+        {
+            "tag_mappings": [
+                nfc_tag_mapping_to_dict(mapping) for mapping in updated_mappings
+            ]
+        }
+    )
+    return updated_mappings
+
+
+def async_register_websocket_api(hass: HomeAssistant) -> None:
     """Register the WebSocket commands consumed by the panel UI."""
+
+    def _get_runtime_data(
+        connection: websocket_api.ActiveConnection,
+        msg: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        domain_data = hass.data.get(DOMAIN)
+        if not domain_data:
+            connection.send_error(
+                msg["id"],
+                "integration_unavailable",
+                "HA Task Manager is not currently loaded.",
+            )
+            return None
+
+        active_entry_id = domain_data.get("_active_entry_id")
+        runtime_data = domain_data.get(active_entry_id) if active_entry_id else None
+        if runtime_data is None:
+            connection.send_error(
+                msg["id"],
+                "integration_unavailable",
+                "HA Task Manager is not currently loaded.",
+            )
+            return None
+
+        return runtime_data
 
     @websocket_api.websocket_command(
         {vol.Required("type"): f"{DOMAIN}/pending_confirmations"}
@@ -337,7 +434,10 @@ def async_register_websocket_api(hass: HomeAssistant, entry_id: str) -> None:
         connection: websocket_api.ActiveConnection,
         msg: dict[str, Any],
     ) -> None:
-        runtime_data = hass.data[DOMAIN][entry_id]
+        runtime_data = _get_runtime_data(connection, msg)
+        if runtime_data is None:
+            return
+
         pending = runtime_data["nfc"].get_pending_confirmations()
         connection.send_result(
             msg["id"],
@@ -351,7 +451,10 @@ def async_register_websocket_api(hass: HomeAssistant, entry_id: str) -> None:
         connection: websocket_api.ActiveConnection,
         msg: dict[str, Any],
     ) -> None:
-        runtime_data = hass.data[DOMAIN][entry_id]
+        runtime_data = _get_runtime_data(connection, msg)
+        if runtime_data is None:
+            return
+
         profiles, mappings = await _load_profiles(runtime_data["store"])
         connection.send_result(
             msg["id"],
@@ -372,7 +475,10 @@ def async_register_websocket_api(hass: HomeAssistant, entry_id: str) -> None:
         connection: websocket_api.ActiveConnection,
         msg: dict[str, Any],
     ) -> None:
-        runtime_data = hass.data[DOMAIN][entry_id]
+        runtime_data = _get_runtime_data(connection, msg)
+        if runtime_data is None:
+            return
+
         tasks = await _load_tasks(runtime_data["store"])
         connection.send_result(
             msg["id"],
@@ -392,7 +498,10 @@ def async_register_websocket_api(hass: HomeAssistant, entry_id: str) -> None:
         connection: websocket_api.ActiveConnection,
         msg: dict[str, Any],
     ) -> None:
-        runtime_data = hass.data[DOMAIN][entry_id]
+        runtime_data = _get_runtime_data(connection, msg)
+        if runtime_data is None:
+            return
+
         task_domain = runtime_data["task_domain"]
         tasks = await _load_tasks(runtime_data["store"])
 
@@ -433,7 +542,10 @@ def async_register_websocket_api(hass: HomeAssistant, entry_id: str) -> None:
         connection: websocket_api.ActiveConnection,
         msg: dict[str, Any],
     ) -> None:
-        runtime_data = hass.data[DOMAIN][entry_id]
+        runtime_data = _get_runtime_data(connection, msg)
+        if runtime_data is None:
+            return
+
         store: TaskStore = runtime_data["store"]
         task_domain = runtime_data["task_domain"]
 
@@ -452,7 +564,7 @@ def async_register_websocket_api(hass: HomeAssistant, entry_id: str) -> None:
             {"tasks": [task_definition_to_dict(existing) for existing in stored_tasks]}
         )
 
-        tag_mappings = await _load_tag_mappings(store)
+        tag_mappings = await _sync_task_nfc_mappings(store, task)
         _rebuild_nfc_service(
             runtime_data,
             tasks=stored_tasks,
@@ -474,7 +586,10 @@ def async_register_websocket_api(hass: HomeAssistant, entry_id: str) -> None:
         connection: websocket_api.ActiveConnection,
         msg: dict[str, Any],
     ) -> None:
-        runtime_data = hass.data[DOMAIN][entry_id]
+        runtime_data = _get_runtime_data(connection, msg)
+        if runtime_data is None:
+            return
+
         store: TaskStore = runtime_data["store"]
         nfc_service = runtime_data["nfc"]
         completion_service = runtime_data["completion"]
@@ -581,7 +696,10 @@ def async_register_websocket_api(hass: HomeAssistant, entry_id: str) -> None:
         connection: websocket_api.ActiveConnection,
         msg: dict[str, Any],
     ) -> None:
-        runtime_data = hass.data[DOMAIN][entry_id]
+        runtime_data = _get_runtime_data(connection, msg)
+        if runtime_data is None:
+            return
+
         store: TaskStore = runtime_data["store"]
         analytics_service = runtime_data["analytics"]
         task_domain = runtime_data["task_domain"]

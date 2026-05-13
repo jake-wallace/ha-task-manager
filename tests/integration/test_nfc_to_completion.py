@@ -376,6 +376,12 @@ async def test_stale_pending_confirmation_is_rejected_after_task_edit(
 
     assert save_response["success"] is True
 
+    await client.send_json_auto_id({"type": "ha_task_manager/pending_confirmations"})
+    cleared_response = await client.receive_json()
+
+    assert cleared_response["success"] is True
+    assert cleared_response["result"] == []
+
     await client.send_json_auto_id(
         {
             "type": "ha_task_manager/confirm_completion",
@@ -385,10 +391,148 @@ async def test_stale_pending_confirmation_is_rejected_after_task_edit(
     confirm_response = await client.receive_json()
 
     assert confirm_response["success"] is False
-    assert confirm_response["error"]["code"] == "invalid_due_instance"
+    assert confirm_response["error"]["code"] == "attempt_not_found"
+
+
+async def test_disabling_task_clears_pending_confirmation(
+    enable_custom_integrations,
+    hass,
+    hass_ws_client,
+) -> None:
+    store = TaskStore(hass)
+    await store.async_save_tasks({"tasks": [_task_payload()]})
+    await store.async_save_profiles(
+        {
+            "profiles": [
+                {
+                    "id": "profile-alice",
+                    "display_name": "Alice",
+                    "avatar_url": "",
+                    "created_at": "2026-05-10T00:00:00+00:00",
+                }
+            ],
+            "mappings": [
+                {
+                    "id": "mapping-alice",
+                    "ha_user_id": "ha-alice",
+                    "profile_id": "profile-alice",
+                    "created_at": "2026-05-10T00:00:00+00:00",
+                }
+            ],
+        }
+    )
+    await store.async_save_nfc(
+        {
+            "tag_mappings": [
+                {
+                    "id": "nfc-map-1",
+                    "tag_id": "tag-phone-1",
+                    "task_id": "task-bathroom",
+                    "label": "Bathroom tag",
+                    "created_at": "2026-05-10T00:00:00+00:00",
+                }
+            ]
+        }
+    )
+
+    entry = MockConfigEntry(domain=DOMAIN, title="Task Manager")
+    entry.add_to_hass(hass)
+
+    assert await hass.config_entries.async_setup(entry.entry_id)
+
+    hass.bus.async_fire(
+        EVENT_NFC_SCANNED,
+        {
+            "tag_id": "tag-phone-1",
+            "actor_ha_user_id": "ha-alice",
+            "source": "phone",
+            "as_of": "2026-05-10",
+        },
+    )
+    await hass.async_block_till_done()
+
+    client = await hass_ws_client(hass)
+    await client.send_json_auto_id({"type": "ha_task_manager/pending_confirmations"})
+    pending_response = await client.receive_json()
+
+    assert pending_response["success"] is True
+    attempt_id = pending_response["result"][0]["id"]
+
+    disabled_task = _task_payload()
+    disabled_task["active"] = False
+    disabled_task["updated_at"] = "2026-05-11T00:00:00+00:00"
+    await client.send_json_auto_id(
+        {
+            "type": "ha_task_manager/save_task",
+            "task": disabled_task,
+        }
+    )
+    save_response = await client.receive_json()
+
+    assert save_response["success"] is True
 
     await client.send_json_auto_id({"type": "ha_task_manager/pending_confirmations"})
     cleared_response = await client.receive_json()
 
     assert cleared_response["success"] is True
     assert cleared_response["result"] == []
+
+    await client.send_json_auto_id(
+        {
+            "type": "ha_task_manager/confirm_completion",
+            "attempt_id": attempt_id,
+        }
+    )
+    confirm_response = await client.receive_json()
+
+    assert confirm_response["success"] is False
+    assert confirm_response["error"]["code"] == "attempt_not_found"
+
+
+async def test_save_task_updates_persisted_nfc_mapping(
+    enable_custom_integrations,
+    hass,
+    hass_ws_client,
+) -> None:
+    store = TaskStore(hass)
+    await store.async_save_tasks({"tasks": [_task_payload()]})
+    await store.async_save_nfc(
+        {
+            "tag_mappings": [
+                {
+                    "id": "nfc-map-1",
+                    "tag_id": "tag-phone-1",
+                    "task_id": "task-bathroom",
+                    "label": "Bathroom tag",
+                    "created_at": "2026-05-10T00:00:00+00:00",
+                }
+            ]
+        }
+    )
+
+    entry = MockConfigEntry(domain=DOMAIN, title="Task Manager")
+    entry.add_to_hass(hass)
+
+    assert await hass.config_entries.async_setup(entry.entry_id)
+
+    client = await hass_ws_client(hass)
+    updated_task = _task_payload()
+    updated_task["nfc_tag_id"] = "tag-phone-2"
+    updated_task["updated_at"] = "2026-05-11T00:00:00+00:00"
+
+    await client.send_json_auto_id(
+        {
+            "type": "ha_task_manager/save_task",
+            "task": updated_task,
+        }
+    )
+    response = await client.receive_json()
+
+    assert response["success"] is True
+
+    stored_nfc = await store.async_load_nfc()
+
+    assert len(stored_nfc["tag_mappings"]) == 1
+    assert stored_nfc["tag_mappings"][0]["tag_id"] == "tag-phone-2"
+    assert stored_nfc["tag_mappings"][0]["task_id"] == "task-bathroom"
+    assert stored_nfc["tag_mappings"][0]["label"] == "Clean bathroom"
