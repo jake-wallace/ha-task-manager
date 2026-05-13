@@ -1,8 +1,7 @@
 """Service exports for HA Task Manager."""
 
-from .task_domain import project_due_instances, select_actionable_due_instance
+from .task_domain import TaskDomainService
 
 __all__ = [
-    "project_due_instances",
-    "select_actionable_due_instance",
+    "TaskDomainService",
 ]

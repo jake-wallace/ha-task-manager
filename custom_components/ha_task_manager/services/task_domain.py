@@ -15,66 +15,70 @@ from custom_components.ha_task_manager.models import (
 )
 
 
-def project_due_instances(
-    task: TaskDefinition,
-    from_date: date,
-    horizon_days: int,
-) -> list[TaskDueInstance]:
-    """Project deterministic due instances for the provided task window."""
-    if horizon_days <= 0:
-        return []
+class TaskDomainService:
+    """Task recurrence projection and due-instance selection service."""
 
-    _validate_task(task)
+    def project_due_instances(
+        self,
+        task: TaskDefinition,
+        from_date: date,
+        horizon_days: int,
+    ) -> list[TaskDueInstance]:
+        """Project deterministic due instances for the provided task window."""
+        if horizon_days <= 0:
+            return []
 
-    start_date = max(from_date, task.created_at.date())
-    end_date = from_date + timedelta(days=horizon_days - 1)
+        _validate_task(task)
 
-    if start_date > end_date:
-        return []
+        start_date = max(from_date, task.created_at.date())
+        end_date = from_date + timedelta(days=horizon_days - 1)
 
-    return [
-        TaskDueInstance.build(
-            task_id=task.id,
-            due_date=due_date,
-            skipped=_is_skipped(task.skip_windows, due_date),
+        if start_date > end_date:
+            return []
+
+        return [
+            TaskDueInstance.build(
+                task_id=task.id,
+                due_date=due_date,
+                skipped=_is_skipped(task.skip_windows, due_date),
+            )
+            for due_date in _expand_due_dates(task, start_date, end_date)
+        ]
+
+    def select_actionable_due_instance(
+        self,
+        task: TaskDefinition,
+        completed_due_instance_ids: set[str],
+        as_of: date,
+        lookback_days: int = 30,
+        horizon_days: int = 60,
+    ) -> TaskDueInstance | None:
+        """Return the next due instance that should be acted on, if any."""
+        normalized_lookback = max(lookback_days, 0)
+        normalized_horizon = max(horizon_days, 0)
+        search_start = as_of - timedelta(days=normalized_lookback)
+        search_span = normalized_lookback + normalized_horizon + 1
+
+        projected_instances = self.project_due_instances(
+            task=task,
+            from_date=search_start,
+            horizon_days=search_span,
         )
-        for due_date in _expand_due_dates(task, start_date, end_date)
-    ]
+        open_instances = [
+            instance
+            for instance in projected_instances
+            if not instance.skipped and instance.id not in completed_due_instance_ids
+        ]
 
+        for instance in open_instances:
+            if instance.due_date <= as_of:
+                return instance
 
-def select_actionable_due_instance(
-    task: TaskDefinition,
-    completed_due_instance_ids: set[str],
-    as_of: date,
-    lookback_days: int = 30,
-    horizon_days: int = 60,
-) -> TaskDueInstance | None:
-    """Return the next due instance that should be acted on, if any."""
-    normalized_lookback = max(lookback_days, 0)
-    normalized_horizon = max(horizon_days, 0)
-    search_start = as_of - timedelta(days=normalized_lookback)
-    search_span = normalized_lookback + normalized_horizon + 1
+        for instance in open_instances:
+            if instance.due_date > as_of:
+                return instance
 
-    projected_instances = project_due_instances(
-        task=task,
-        from_date=search_start,
-        horizon_days=search_span,
-    )
-    open_instances = [
-        instance
-        for instance in projected_instances
-        if not instance.skipped and instance.id not in completed_due_instance_ids
-    ]
-
-    for instance in open_instances:
-        if instance.due_date <= as_of:
-            return instance
-
-    for instance in open_instances:
-        if instance.due_date > as_of:
-            return instance
-
-    return None
+        return None
 
 
 def _validate_task(task: TaskDefinition) -> None:

@@ -9,10 +9,7 @@ from custom_components.ha_task_manager.models import (
     SkipWindow,
     TaskDefinition,
 )
-from custom_components.ha_task_manager.services.task_domain import (
-    project_due_instances,
-    select_actionable_due_instance,
-)
+from custom_components.ha_task_manager.services.task_domain import TaskDomainService
 
 
 def build_task(
@@ -32,7 +29,14 @@ def build_task(
     )
 
 
-def test_weekly_expansion_produces_dates_and_deterministic_ids() -> None:
+@pytest.fixture(name="task_domain_service")
+def task_domain_service_fixture() -> TaskDomainService:
+    return TaskDomainService()
+
+
+def test_weekly_expansion_produces_dates_and_deterministic_ids(
+    task_domain_service: TaskDomainService,
+) -> None:
     task = build_task(
         RecurrenceRule(
             frequency=RecurrenceFrequency.WEEKLY,
@@ -40,7 +44,7 @@ def test_weekly_expansion_produces_dates_and_deterministic_ids() -> None:
         )
     )
 
-    instances = project_due_instances(
+    instances = task_domain_service.project_due_instances(
         task=task,
         from_date=date(2026, 5, 11),
         horizon_days=14,
@@ -56,7 +60,9 @@ def test_weekly_expansion_produces_dates_and_deterministic_ids() -> None:
     ]
 
 
-def test_skip_windows_mark_matching_dates_as_skipped() -> None:
+def test_skip_windows_mark_matching_dates_as_skipped(
+    task_domain_service: TaskDomainService,
+) -> None:
     task = build_task(
         RecurrenceRule(
             frequency=RecurrenceFrequency.WEEKLY,
@@ -71,7 +77,7 @@ def test_skip_windows_mark_matching_dates_as_skipped() -> None:
         ],
     )
 
-    instances = project_due_instances(
+    instances = task_domain_service.project_due_instances(
         task=task,
         from_date=date(2026, 5, 11),
         horizon_days=14,
@@ -83,7 +89,9 @@ def test_skip_windows_mark_matching_dates_as_skipped() -> None:
     ]
 
 
-def test_daily_recurrence_produces_consecutive_dates() -> None:
+def test_daily_recurrence_produces_consecutive_dates(
+    task_domain_service: TaskDomainService,
+) -> None:
     task = build_task(
         RecurrenceRule(
             frequency=RecurrenceFrequency.DAILY,
@@ -91,7 +99,7 @@ def test_daily_recurrence_produces_consecutive_dates() -> None:
         )
     )
 
-    instances = project_due_instances(
+    instances = task_domain_service.project_due_instances(
         task=task,
         from_date=date(2026, 5, 1),
         horizon_days=5,
@@ -106,7 +114,9 @@ def test_daily_recurrence_produces_consecutive_dates() -> None:
     ]
 
 
-def test_custom_interval_recurrence_works() -> None:
+def test_custom_interval_recurrence_works(
+    task_domain_service: TaskDomainService,
+) -> None:
     task = build_task(
         RecurrenceRule(
             frequency=RecurrenceFrequency.CUSTOM_DAYS,
@@ -114,7 +124,7 @@ def test_custom_interval_recurrence_works() -> None:
         )
     )
 
-    instances = project_due_instances(
+    instances = task_domain_service.project_due_instances(
         task=task,
         from_date=date(2026, 5, 1),
         horizon_days=10,
@@ -128,7 +138,9 @@ def test_custom_interval_recurrence_works() -> None:
     ]
 
 
-def test_monthly_recurrence_clamps_to_last_valid_day() -> None:
+def test_monthly_recurrence_clamps_to_last_valid_day(
+    task_domain_service: TaskDomainService,
+) -> None:
     task = build_task(
         RecurrenceRule(
             frequency=RecurrenceFrequency.MONTHLY,
@@ -137,7 +149,7 @@ def test_monthly_recurrence_clamps_to_last_valid_day() -> None:
         created_at=datetime(2026, 1, 1, tzinfo=UTC),
     )
 
-    instances = project_due_instances(
+    instances = task_domain_service.project_due_instances(
         task=task,
         from_date=date(2026, 1, 31),
         horizon_days=61,
@@ -150,7 +162,9 @@ def test_monthly_recurrence_clamps_to_last_valid_day() -> None:
     ]
 
 
-def test_invalid_weekly_rule_without_days_raises() -> None:
+def test_invalid_weekly_rule_without_days_raises(
+    task_domain_service: TaskDomainService,
+) -> None:
     task = build_task(
         RecurrenceRule(
             frequency=RecurrenceFrequency.WEEKLY,
@@ -159,14 +173,16 @@ def test_invalid_weekly_rule_without_days_raises() -> None:
     )
 
     with pytest.raises(InvalidRecurrenceError):
-        project_due_instances(
+        task_domain_service.project_due_instances(
             task=task,
             from_date=date(2026, 5, 1),
             horizon_days=7,
         )
 
 
-def test_changing_rule_changes_future_projections() -> None:
+def test_changing_rule_changes_future_projections(
+    task_domain_service: TaskDomainService,
+) -> None:
     task = build_task(
         RecurrenceRule(
             frequency=RecurrenceFrequency.WEEKLY,
@@ -174,7 +190,7 @@ def test_changing_rule_changes_future_projections() -> None:
         )
     )
 
-    original = project_due_instances(
+    original = task_domain_service.project_due_instances(
         task=task,
         from_date=date(2026, 5, 11),
         horizon_days=14,
@@ -185,7 +201,7 @@ def test_changing_rule_changes_future_projections() -> None:
         days_of_week=[5],
     )
 
-    updated = project_due_instances(
+    updated = task_domain_service.project_due_instances(
         task=task,
         from_date=date(2026, 5, 11),
         horizon_days=14,
@@ -200,7 +216,9 @@ def test_changing_rule_changes_future_projections() -> None:
     ]
 
 
-def test_actionable_selection_picks_oldest_open_overdue_or_today_instance() -> None:
+def test_actionable_selection_picks_oldest_open_overdue_or_today_instance(
+    task_domain_service: TaskDomainService,
+) -> None:
     task = build_task(
         RecurrenceRule(
             frequency=RecurrenceFrequency.DAILY,
@@ -208,7 +226,7 @@ def test_actionable_selection_picks_oldest_open_overdue_or_today_instance() -> N
         )
     )
 
-    actionable = select_actionable_due_instance(
+    actionable = task_domain_service.select_actionable_due_instance(
         task=task,
         completed_due_instance_ids=set(),
         as_of=date(2026, 5, 5),
@@ -221,7 +239,9 @@ def test_actionable_selection_picks_oldest_open_overdue_or_today_instance() -> N
     assert actionable.id == "task-123:2026-05-02"
 
 
-def test_actionable_selection_falls_forward_to_next_future_instance() -> None:
+def test_actionable_selection_falls_forward_to_next_future_instance(
+    task_domain_service: TaskDomainService,
+) -> None:
     task = build_task(
         RecurrenceRule(
             frequency=RecurrenceFrequency.DAILY,
@@ -229,7 +249,7 @@ def test_actionable_selection_falls_forward_to_next_future_instance() -> None:
         )
     )
 
-    actionable = select_actionable_due_instance(
+    actionable = task_domain_service.select_actionable_due_instance(
         task=task,
         completed_due_instance_ids={
             "task-123:2026-05-02",
@@ -247,7 +267,9 @@ def test_actionable_selection_falls_forward_to_next_future_instance() -> None:
     assert actionable.id == "task-123:2026-05-06"
 
 
-def test_actionable_selection_ignores_skipped_and_completed_instances() -> None:
+def test_actionable_selection_ignores_skipped_and_completed_instances(
+    task_domain_service: TaskDomainService,
+) -> None:
     task = build_task(
         RecurrenceRule(
             frequency=RecurrenceFrequency.DAILY,
@@ -262,7 +284,7 @@ def test_actionable_selection_ignores_skipped_and_completed_instances() -> None:
         ],
     )
 
-    actionable = select_actionable_due_instance(
+    actionable = task_domain_service.select_actionable_due_instance(
         task=task,
         completed_due_instance_ids={
             "task-123:2026-05-01",
