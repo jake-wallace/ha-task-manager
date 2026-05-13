@@ -374,7 +374,15 @@ def async_register_websocket_api(hass: HomeAssistant, entry_id: str) -> None:
         runtime_data = hass.data[DOMAIN][entry_id]
         task_domain = runtime_data["task_domain"]
         tasks = await _load_tasks(runtime_data["store"])
-        from_date = _parse_date(msg.get("from_date", utc_now().date().isoformat()))
+
+        try:
+            from_date = _parse_date(
+                msg.get("from_date", utc_now().date().isoformat())
+            )
+        except ValueError as err:
+            connection.send_error(msg["id"], "invalid_from_date", str(err))
+            return
+
         horizon_days = msg["horizon_days"]
 
         results: list[dict[str, Any]] = []
@@ -483,16 +491,22 @@ def async_register_websocket_api(hass: HomeAssistant, entry_id: str) -> None:
         history_before = len(completion_service.get_history())
 
         try:
+            completed_at = (
+                _parse_datetime(msg["completed_at"])
+                if "completed_at" in msg
+                else None
+            )
+        except ValueError as err:
+            connection.send_error(msg["id"], "invalid_completed_at", str(err))
+            return
+
+        try:
             completion_record = completion_service.confirm_completion(
                 task=task,
                 due_instance=due_instance,
                 actor_ha_user_id=attempt.actor_ha_user_id,
                 source=attempt.source,
-                completed_at=(
-                    _parse_datetime(msg["completed_at"])
-                    if "completed_at" in msg
-                    else None
-                ),
+                completed_at=completed_at,
             )
         except TaskManagerError as err:
             updated_history = completion_service.get_history()
@@ -529,7 +543,12 @@ def async_register_websocket_api(hass: HomeAssistant, entry_id: str) -> None:
         analytics_service = runtime_data["analytics"]
         task_domain = runtime_data["task_domain"]
 
-        as_of = _parse_date(msg.get("as_of", utc_now().date().isoformat()))
+        try:
+            as_of = _parse_date(msg.get("as_of", utc_now().date().isoformat()))
+        except ValueError as err:
+            connection.send_error(msg["id"], "invalid_as_of", str(err))
+            return
+
         horizon_days = msg["horizon_days"]
         from_date = as_of - timedelta(days=max(horizon_days - 1, 0))
 

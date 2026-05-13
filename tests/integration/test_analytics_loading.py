@@ -6,12 +6,7 @@ from custom_components.ha_task_manager.const import DOMAIN
 from custom_components.ha_task_manager.storage.store import TaskStore
 
 
-async def test_analytics_loading_returns_profile_scoped_snapshot(
-    enable_custom_integrations,
-    hass,
-    hass_ws_client,
-) -> None:
-    store = TaskStore(hass)
+async def _seed_analytics_store(store: TaskStore) -> None:
     await store.async_save_tasks(
         {
             "tasks": [
@@ -120,6 +115,15 @@ async def test_analytics_loading_returns_profile_scoped_snapshot(
         }
     )
 
+
+async def test_analytics_loading_returns_profile_scoped_snapshot(
+    enable_custom_integrations,
+    hass,
+    hass_ws_client,
+) -> None:
+    store = TaskStore(hass)
+    await _seed_analytics_store(store)
+
     entry = MockConfigEntry(domain=DOMAIN, title="Task Manager")
     entry.add_to_hass(hass)
 
@@ -150,3 +154,58 @@ async def test_analytics_loading_returns_profile_scoped_snapshot(
         "current_streak": 1,
         "longest_streak": 1,
     }
+
+
+async def test_due_instances_rejects_invalid_from_date(
+    enable_custom_integrations,
+    hass,
+    hass_ws_client,
+) -> None:
+    store = TaskStore(hass)
+    await _seed_analytics_store(store)
+
+    entry = MockConfigEntry(domain=DOMAIN, title="Task Manager")
+    entry.add_to_hass(hass)
+
+    assert await hass.config_entries.async_setup(entry.entry_id)
+
+    client = await hass_ws_client(hass)
+    await client.send_json_auto_id(
+        {
+            "type": "ha_task_manager/due_instances",
+            "from_date": "not-a-date",
+            "horizon_days": 7,
+        }
+    )
+    response = await client.receive_json()
+
+    assert response["success"] is False
+    assert response["error"]["code"] == "invalid_from_date"
+
+
+async def test_analytics_rejects_invalid_as_of(
+    enable_custom_integrations,
+    hass,
+    hass_ws_client,
+) -> None:
+    store = TaskStore(hass)
+    await _seed_analytics_store(store)
+
+    entry = MockConfigEntry(domain=DOMAIN, title="Task Manager")
+    entry.add_to_hass(hass)
+
+    assert await hass.config_entries.async_setup(entry.entry_id)
+
+    client = await hass_ws_client(hass)
+    await client.send_json_auto_id(
+        {
+            "type": "ha_task_manager/analytics",
+            "profile_id": "profile-alice",
+            "as_of": "not-a-date",
+            "horizon_days": 4,
+        }
+    )
+    response = await client.receive_json()
+
+    assert response["success"] is False
+    assert response["error"]["code"] == "invalid_as_of"
