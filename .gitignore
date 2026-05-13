@@ -1,0 +1,44 @@
+# Design docs and specs (local reference only, not version-controlled)
+docs/
+
+# Agent instruction files (local use only)
+AGENTS.md
+.github/copilot-instructions.md
+*.instructions.md
+.copilot-instructions.md
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+coverage.xml
+
+# Node / TypeScript frontend
+node_modules/
+dist/
+*.tsbuildinfo
+.parcel-cache/
+
+# Home Assistant
+*.log
+.storage/
+.secrets
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/settings.json
+.idea/
+*.swp
