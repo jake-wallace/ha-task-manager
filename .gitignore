@@ -6,6 +6,7 @@ AGENTS.md
 .github/copilot-instructions.md
 *.instructions.md
 .copilot-instructions.md
+.worktrees/
 
 # Python
 __pycache__/
