@@ -1,8 +1,13 @@
 from datetime import UTC, date
+from typing import get_type_hints
 
 import pytest
 
-from custom_components.ha_task_manager.models import SkipWindow, TaskDueInstance
+from custom_components.ha_task_manager.models import (
+    ProfileAnalyticsSnapshot,
+    SkipWindow,
+    TaskDueInstance,
+)
 from custom_components.ha_task_manager.models.time import utc_now
 
 
@@ -38,3 +43,9 @@ def test_skip_window_contains_is_inclusive_of_boundary_dates() -> None:
 def test_skip_window_requires_explicit_date_bounds() -> None:
     with pytest.raises(TypeError):
         SkipWindow()
+
+
+def test_profile_analytics_snapshot_daily_completions_uses_date_buckets() -> None:
+    hints = get_type_hints(ProfileAnalyticsSnapshot)
+
+    assert hints["daily_completions"] == list[tuple[date, int]]

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import date, datetime
 
 from .time import utc_now
 
@@ -14,7 +14,7 @@ class ProfileAnalyticsSnapshot:
 
     profile_id: str = ""
     computed_at: datetime = field(default_factory=utc_now)
-    daily_completions: list[tuple[str, int]] = field(default_factory=list)
+    daily_completions: list[tuple[date, int]] = field(default_factory=list)
     on_time_count: int = 0
     late_count: int = 0
     missed_count: int = 0
