@@ -93869,6 +93869,14 @@ let MyTasksView = class MyTasksView extends i$1 {
                 Your Home Assistant user is not mapped to a household profile yet. Assignment-aware completion stays blocked until that identity link exists.
               </p>
             </div>
+            ${this.pendingConfirmationCount > 0
+                ? b `
+                  <div class="pending">
+                    <span>${this.pendingConfirmationCount} NFC confirmation${this.pendingConfirmationCount === 1 ? "" : "s"} waiting</span>
+                    <button type="button" @click=${this.reviewPending}>Review</button>
+                  </div>
+                `
+                : A}
           </div>
           <div class="stats">
             <div class="stat"><strong>${this.pendingConfirmationCount}</strong><span>Pending NFC confirmations</span></div>
@@ -94117,6 +94125,7 @@ function emptyFormState(profiles) {
         daysOfWeek: [1],
         intervalDays: 2,
         dayOfMonth: 1,
+        skipWindows: [],
     };
 }
 function formStateFromTask(task) {
@@ -94131,6 +94140,7 @@ function formStateFromTask(task) {
         daysOfWeek: task.recurrence.days_of_week.slice(),
         intervalDays: task.recurrence.interval_days,
         dayOfMonth: task.recurrence.day_of_month ?? 1,
+        skipWindows: task.skip_windows.map((skipWindow) => ({ ...skipWindow })),
     };
 }
 function slugify(value) {
@@ -94151,6 +94161,21 @@ let TaskBuilderView = class TaskBuilderView extends i$1 {
         this.selectedTaskId = NEW_TASK_ID;
         this.formState = emptyFormState([]);
         this.localError = "";
+        this.addSkipWindow = () => {
+            this.localError = "";
+            this.formState = {
+                ...this.formState,
+                skipWindows: [
+                    ...this.formState.skipWindows,
+                    {
+                        id: `skip-${crypto.randomUUID().slice(0, 8)}`,
+                        label: "",
+                        start_date: this.formState.startDate,
+                        end_date: this.formState.startDate,
+                    },
+                ],
+            };
+        };
     }
     willUpdate(changedProperties) {
         if (changedProperties.has("profiles") && !this.formState.assignedProfileId) {
@@ -94303,6 +94328,55 @@ let TaskBuilderView = class TaskBuilderView extends i$1 {
                 `
             : b ``}
             <label>
+              Skip windows
+              <div class="skip-window-list">
+                ${this.formState.skipWindows.map((skipWindow, index) => b `
+                    <div class="skip-window-card">
+                      <div class="row">
+                        <label>
+                          Label
+                          <input
+                            .value=${skipWindow.label}
+                            @input=${this.handleSkipWindowText(index, "label")}
+                            placeholder="Vacation, renovation, travel"
+                          />
+                        </label>
+                        <label>
+                          Start date
+                          <input
+                            type="date"
+                            .value=${skipWindow.start_date}
+                            @input=${this.handleSkipWindowText(index, "start_date")}
+                            required
+                          />
+                        </label>
+                      </div>
+                      <div class="row">
+                        <label>
+                          End date
+                          <input
+                            type="date"
+                            .value=${skipWindow.end_date}
+                            @input=${this.handleSkipWindowText(index, "end_date")}
+                            required
+                          />
+                        </label>
+                      </div>
+                      <button
+                        class="inline-action"
+                        type="button"
+                        @click=${() => this.removeSkipWindow(index)}
+                      >
+                        Remove skip window
+                      </button>
+                    </div>
+                  `)}
+                <button class="inline-action" type="button" @click=${this.addSkipWindow}>
+                  Add skip window
+                </button>
+              </div>
+            </label>
+            <label>
               <input type="checkbox" .checked=${this.formState.active} @change=${this.toggleActive} />
               Active task
             </label>
@@ -94392,6 +94466,24 @@ let TaskBuilderView = class TaskBuilderView extends i$1 {
         }
         this.localError = "";
     }
+    removeSkipWindow(index) {
+        this.localError = "";
+        this.formState = {
+            ...this.formState,
+            skipWindows: this.formState.skipWindows.filter((_, currentIndex) => currentIndex !== index),
+        };
+    }
+    handleSkipWindowText(index, field) {
+        return (event) => {
+            const target = event.currentTarget;
+            const skipWindows = this.formState.skipWindows.map((skipWindow, currentIndex) => currentIndex === index ? { ...skipWindow, [field]: target.value } : skipWindow);
+            this.localError = "";
+            this.formState = {
+                ...this.formState,
+                skipWindows,
+            };
+        };
+    }
     handleSubmit(event) {
         event.preventDefault();
         this.localError = this.validateForm();
@@ -94411,7 +94503,10 @@ let TaskBuilderView = class TaskBuilderView extends i$1 {
                 interval_days: this.formState.frequency === "custom_days" ? this.formState.intervalDays : 1,
                 day_of_month: this.formState.frequency === "monthly" ? this.formState.dayOfMonth : null,
             },
-            skip_windows: existingTask?.skip_windows ?? [],
+            skip_windows: this.formState.skipWindows.map((skipWindow) => ({
+                ...skipWindow,
+                label: skipWindow.label.trim(),
+            })),
             assigned_profile_id: this.formState.assignedProfileId,
             nfc_tag_id: this.formState.nfcTagId.trim() || null,
             active: this.formState.active,
@@ -94444,6 +94539,11 @@ let TaskBuilderView = class TaskBuilderView extends i$1 {
         if (this.formState.frequency === "monthly" &&
             (this.formState.dayOfMonth < 1 || this.formState.dayOfMonth > 31)) {
             return "Monthly recurrence day must be between 1 and 31.";
+        }
+        if (this.formState.skipWindows.some((skipWindow) => !skipWindow.start_date ||
+            !skipWindow.end_date ||
+            skipWindow.start_date > skipWindow.end_date)) {
+            return "Each skip window needs a valid start and end date.";
         }
         return "";
     }
@@ -94549,10 +94649,38 @@ TaskBuilderView.styles = i$4 `
     }
 
     .frequency-grid,
-    .weekday-grid {
+    .weekday-grid,
+    .skip-window-list {
       display: flex;
       flex-wrap: wrap;
       gap: 8px;
+    }
+
+    .skip-window-list {
+      display: grid;
+      gap: 12px;
+    }
+
+    .skip-window-card {
+      display: grid;
+      gap: 12px;
+      padding: 14px;
+      border-radius: 18px;
+      border: 1px solid rgba(44, 67, 49, 0.1);
+      background: rgba(245, 248, 242, 0.9);
+    }
+
+    .inline-action {
+      appearance: none;
+      justify-self: start;
+      border: none;
+      border-radius: 999px;
+      background: rgba(50, 75, 57, 0.08);
+      color: #294132;
+      cursor: pointer;
+      font: inherit;
+      font-weight: 700;
+      padding: 9px 14px;
     }
 
     .chip {

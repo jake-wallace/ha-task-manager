@@ -178,6 +178,14 @@ export class MyTasksView extends LitElement {
                 Your Home Assistant user is not mapped to a household profile yet. Assignment-aware completion stays blocked until that identity link exists.
               </p>
             </div>
+            ${this.pendingConfirmationCount > 0
+              ? html`
+                  <div class="pending">
+                    <span>${this.pendingConfirmationCount} NFC confirmation${this.pendingConfirmationCount === 1 ? "" : "s"} waiting</span>
+                    <button type="button" @click=${this.reviewPending}>Review</button>
+                  </div>
+                `
+              : nothing}
           </div>
           <div class="stats">
             <div class="stat"><strong>${this.pendingConfirmationCount}</strong><span>Pending NFC confirmations</span></div>
