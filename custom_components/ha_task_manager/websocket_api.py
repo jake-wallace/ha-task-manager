@@ -10,7 +10,7 @@ from homeassistant.components import websocket_api
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import config_validation as cv
 
-from .const import DOMAIN
+from .const import DOMAIN, EVENT_COMPLETION_RECORDED
 from .exceptions import TaskManagerError
 from .models import (
     AttemptOutcome,
@@ -485,15 +485,15 @@ def async_register_websocket_api(hass: HomeAssistant, entry_id: str) -> None:
         except TaskManagerError as err:
             updated_history = completion_service.get_history()
             if len(updated_history) > history_before:
-                await store.async_append_completion(
-                    completion_record_to_dict(updated_history[-1])
-                )
+                recorded_payload = completion_record_to_dict(updated_history[-1])
+                await store.async_append_completion(recorded_payload)
+                hass.bus.async_fire(EVENT_COMPLETION_RECORDED, recorded_payload)
             connection.send_error(msg["id"], "confirm_completion_failed", str(err))
             return
 
-        await store.async_append_completion(
-            completion_record_to_dict(completion_record)
-        )
+        recorded_payload = completion_record_to_dict(completion_record)
+        await store.async_append_completion(recorded_payload)
+        hass.bus.async_fire(EVENT_COMPLETION_RECORDED, recorded_payload)
         nfc_service.dismiss_confirmation(attempt.id)
         connection.send_result(msg["id"], completion_record_to_dict(completion_record))
 

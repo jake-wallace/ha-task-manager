@@ -1,11 +1,8 @@
 from __future__ import annotations
 
-from datetime import date
-
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-from custom_components.ha_task_manager.const import DOMAIN
-from custom_components.ha_task_manager.models import CompletionSource
+from custom_components.ha_task_manager.const import DOMAIN, EVENT_NFC_SCANNED
 from custom_components.ha_task_manager.storage.store import TaskStore
 
 
@@ -78,13 +75,16 @@ async def test_reader_pending_confirmation_and_completion_follow_same_path(
 
     assert await hass.config_entries.async_setup(entry.entry_id)
 
-    services = hass.data[DOMAIN][entry.entry_id]
-    attempt = services["nfc"].initiate_confirmation(
-        tag_id="tag-reader-1",
-        actor_ha_user_id="reader-ha-alice",
-        source=CompletionSource.NFC_READER,
-        as_of=date(2026, 5, 10),
+    hass.bus.async_fire(
+        EVENT_NFC_SCANNED,
+        {
+            "tag_id": "tag-reader-1",
+            "actor_ha_user_id": "reader-ha-alice",
+            "source": "reader",
+            "as_of": "2026-05-10",
+        },
     )
+    await hass.async_block_till_done()
 
     client = await hass_ws_client(hass)
     await client.send_json_auto_id({"type": "ha_task_manager/pending_confirmations"})
@@ -93,11 +93,12 @@ async def test_reader_pending_confirmation_and_completion_follow_same_path(
     assert pending_response["success"] is True
     assert pending_response["result"][0]["source"] == "nfc_reader"
     assert pending_response["result"][0]["due_instance_id"] == "task-trash:2026-05-10"
+    attempt_id = pending_response["result"][0]["id"]
 
     await client.send_json_auto_id(
         {
             "type": "ha_task_manager/confirm_completion",
-            "attempt_id": attempt.id,
+            "attempt_id": attempt_id,
         }
     )
     confirm_response = await client.receive_json()

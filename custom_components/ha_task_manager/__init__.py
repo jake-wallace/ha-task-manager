@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import logging
+from datetime import date
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
+from homeassistant.core import Event, HomeAssistant, callback
 
-from .const import DOMAIN
+from .const import DOMAIN, EVENT_COMPLETION_REQUESTED, EVENT_NFC_SCANNED
+from .exceptions import TaskManagerError
+from .models import AttemptOutcome, CompletionSource
 from .panel import async_register_task_manager_panel
 from .services.analytics import AnalyticsService
 from .services.completion_domain import CompletionDomainService
@@ -17,6 +21,7 @@ from .services.task_domain import TaskDomainService
 from .storage.store import TaskStore
 from .websocket_api import (
     async_register_websocket_api,
+    completion_attempt_to_dict,
     completion_record_from_dict,
     household_profile_from_dict,
     nfc_tag_mapping_from_dict,
@@ -24,8 +29,112 @@ from .websocket_api import (
     user_profile_mapping_from_dict,
 )
 
+_LOGGER = logging.getLogger(__name__)
 _PANEL_REGISTERED = "_panel_registered"
 _WEBSOCKET_REGISTERED = "_websocket_registered"
+_NFC_LISTENER_UNSUBSCRIBE = "_nfc_listener_unsubscribe"
+
+
+def _resolve_nfc_scan_source(raw_source: Any) -> CompletionSource | None:
+    if not isinstance(raw_source, str):
+        return None
+
+    normalized_source = raw_source.strip().lower()
+    if normalized_source in {"phone", CompletionSource.NFC_PHONE.value}:
+        return CompletionSource.NFC_PHONE
+    if normalized_source in {"reader", CompletionSource.NFC_READER.value}:
+        return CompletionSource.NFC_READER
+
+    return None
+
+
+def _parse_nfc_scan_as_of(raw_as_of: Any) -> date | None:
+    if raw_as_of is None:
+        return None
+    if isinstance(raw_as_of, date):
+        return raw_as_of
+    if not isinstance(raw_as_of, str):
+        return None
+
+    try:
+        return date.fromisoformat(raw_as_of)
+    except ValueError:
+        return None
+
+
+def _confirmed_due_instance_ids(
+    completion_service: CompletionDomainService,
+) -> set[str]:
+    return {
+        record.due_instance_id
+        for record in completion_service.get_history()
+        if record.outcome == AttemptOutcome.CONFIRMED
+    }
+
+
+def _register_nfc_event_listener(
+    hass: HomeAssistant,
+    runtime_data: dict[str, Any],
+):
+    nfc_service: NfcEventService = runtime_data["nfc"]
+    completion_service: CompletionDomainService = runtime_data["completion"]
+
+    @callback
+    def _handle_nfc_scan(event: Event[dict[str, Any]]) -> None:
+        event_data = event.data or {}
+        tag_id = event_data.get("tag_id")
+        actor_ha_user_id = event_data.get("actor_ha_user_id")
+        source = _resolve_nfc_scan_source(event_data.get("source"))
+        as_of = _parse_nfc_scan_as_of(event_data.get("as_of"))
+
+        if not isinstance(tag_id, str) or not tag_id:
+            _LOGGER.warning("Ignoring NFC scan without a tag_id: %s", event_data)
+            return
+        if not isinstance(actor_ha_user_id, str) or not actor_ha_user_id:
+            _LOGGER.warning(
+                "Ignoring NFC scan for tag %s without actor_ha_user_id",
+                tag_id,
+            )
+            return
+        if source is None:
+            _LOGGER.warning(
+                "Ignoring NFC scan for tag %s with unsupported source %r",
+                tag_id,
+                event_data.get("source"),
+            )
+            return
+        if event_data.get("as_of") is not None and as_of is None:
+            _LOGGER.warning(
+                "Ignoring NFC scan for tag %s with invalid as_of %r",
+                tag_id,
+                event_data.get("as_of"),
+            )
+            return
+
+        try:
+            attempt = nfc_service.initiate_confirmation(
+                tag_id=tag_id,
+                actor_ha_user_id=actor_ha_user_id,
+                source=source,
+                completed_due_instance_ids=_confirmed_due_instance_ids(
+                    completion_service
+                ),
+                as_of=as_of,
+            )
+        except TaskManagerError as err:
+            _LOGGER.warning(
+                "Failed to initiate NFC confirmation for tag %s: %s",
+                tag_id,
+                err,
+            )
+            return
+
+        hass.bus.async_fire(
+            EVENT_COMPLETION_REQUESTED,
+            completion_attempt_to_dict(attempt),
+        )
+
+    return hass.bus.async_listen(EVENT_NFC_SCANNED, _handle_nfc_scan)
 
 
 async def async_setup(hass: HomeAssistant, config: dict[str, Any]) -> bool:
@@ -80,7 +189,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     )
     analytics_service = AnalyticsService()
 
-    domain_data[entry.entry_id] = {
+    runtime_data = {
         "store": store,
         "identity": identity_mapping_service,
         "task_domain": task_domain_service,
@@ -88,6 +197,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         "nfc": nfc_event_service,
         "analytics": analytics_service,
     }
+    runtime_data[_NFC_LISTENER_UNSUBSCRIBE] = _register_nfc_event_listener(
+        hass,
+        runtime_data,
+    )
+    domain_data[entry.entry_id] = runtime_data
 
     if not domain_data.get(_WEBSOCKET_REGISTERED):
         async_register_websocket_api(hass, entry.entry_id)
@@ -104,6 +218,12 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
     if DOMAIN not in hass.data:
         return True
+
+    runtime_data = hass.data[DOMAIN].get(entry.entry_id)
+    if runtime_data is not None:
+        unsubscribe = runtime_data.pop(_NFC_LISTENER_UNSUBSCRIBE, None)
+        if unsubscribe is not None:
+            unsubscribe()
 
     hass.data[DOMAIN].pop(entry.entry_id, None)
     remaining_entries = {
