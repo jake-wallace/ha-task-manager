@@ -71,6 +71,14 @@ export interface HouseholdProfile {
   created_at: string;
 }
 
+export interface CurrentUserProfile {
+  ha_user_id: string;
+  mapped: boolean;
+  profile_id: string | null;
+  display_name: string | null;
+  avatar_url: string | null;
+}
+
 export interface DailyCompletionBucket {
   date: string;
   count: number;

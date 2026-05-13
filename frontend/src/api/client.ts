@@ -1,6 +1,7 @@
 import type {
   CompletionAttempt,
   CompletionRecord,
+  CurrentUserProfile,
   HouseholdProfile,
   ProfileAnalyticsSnapshot,
   TaskDefinition,
@@ -18,6 +19,11 @@ export interface DueInstanceQuery {
 
 export interface ConfirmCompletionOptions {
   attemptId: string;
+  completedAt?: string;
+}
+
+export interface CompleteDueInstanceOptions {
+  dueInstanceId: string;
   completedAt?: string;
 }
 
@@ -49,6 +55,14 @@ export function fetchProfiles(
 ): Promise<HouseholdProfile[]> {
   return callApi<HouseholdProfile[]>(hass, {
     type: `${DOMAIN}/profiles`
+  });
+}
+
+export function fetchCurrentProfile(
+  hass: HomeAssistantConnection
+): Promise<CurrentUserProfile> {
+  return callApi<CurrentUserProfile>(hass, {
+    type: `${DOMAIN}/current_profile`
   });
 }
 
@@ -86,6 +100,17 @@ export function confirmCompletion(
   return callApi<CompletionRecord>(hass, {
     type: `${DOMAIN}/confirm_completion`,
     attempt_id: options.attemptId,
+    ...(options.completedAt ? { completed_at: options.completedAt } : {})
+  });
+}
+
+export function completeDueInstance(
+  hass: HomeAssistantConnection,
+  options: CompleteDueInstanceOptions
+): Promise<CompletionRecord> {
+  return callApi<CompletionRecord>(hass, {
+    type: `${DOMAIN}/complete_due_instance`,
+    due_instance_id: options.dueInstanceId,
     ...(options.completedAt ? { completed_at: options.completedAt } : {})
   });
 }

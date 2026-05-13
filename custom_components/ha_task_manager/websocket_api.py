@@ -377,6 +377,23 @@ async def _load_history(store: TaskStore) -> list[CompletionRecord]:
     return [completion_record_from_dict(raw_record) for raw_record in raw_history]
 
 
+async def _persist_latest_history_record_if_needed(
+    hass: HomeAssistant,
+    store: TaskStore,
+    completion_service,
+    *,
+    history_before: int,
+) -> bool:
+    updated_history = completion_service.get_history()
+    if len(updated_history) <= history_before:
+        return False
+
+    recorded_payload = completion_record_to_dict(updated_history[-1])
+    await store.async_append_completion(recorded_payload)
+    hass.bus.async_fire(EVENT_COMPLETION_RECORDED, recorded_payload)
+    return True
+
+
 def _rebuild_nfc_service(
     runtime_data: dict[str, Any],
     *,
@@ -497,6 +514,48 @@ def async_register_websocket_api(hass: HomeAssistant) -> None:
         connection.send_result(
             msg["id"],
             [household_profile_to_dict(profile) for profile in profiles],
+        )
+
+    @websocket_api.websocket_command(
+        {vol.Required("type"): f"{DOMAIN}/current_profile"}
+    )
+    @websocket_api.async_response
+    async def ws_current_profile(
+        hass: HomeAssistant,
+        connection: websocket_api.ActiveConnection,
+        msg: dict[str, Any],
+    ) -> None:
+        runtime_data = _get_runtime_data(connection, msg)
+        if runtime_data is None:
+            return
+
+        identity_service = runtime_data["identity"]
+        ha_user_id = connection.user.id
+
+        try:
+            profile = identity_service.resolve_profile(ha_user_id)
+        except UnmappedUserError:
+            connection.send_result(
+                msg["id"],
+                {
+                    "ha_user_id": ha_user_id,
+                    "mapped": False,
+                    "profile_id": None,
+                    "display_name": None,
+                    "avatar_url": None,
+                },
+            )
+            return
+
+        connection.send_result(
+            msg["id"],
+            {
+                "ha_user_id": ha_user_id,
+                "mapped": True,
+                "profile_id": profile.id,
+                "display_name": profile.display_name,
+                "avatar_url": profile.avatar_url,
+            },
         )
 
     @websocket_api.websocket_command({vol.Required("type"): f"{DOMAIN}/tasks"})
@@ -693,11 +752,12 @@ def async_register_websocket_api(hass: HomeAssistant) -> None:
                 completed_at=completed_at,
             )
         except TaskManagerError as err:
-            updated_history = completion_service.get_history()
-            if len(updated_history) > history_before:
-                recorded_payload = completion_record_to_dict(updated_history[-1])
-                await store.async_append_completion(recorded_payload)
-                hass.bus.async_fire(EVENT_COMPLETION_RECORDED, recorded_payload)
+            await _persist_latest_history_record_if_needed(
+                hass,
+                store,
+                completion_service,
+                history_before=history_before,
+            )
             if isinstance(err, UnmappedUserError):
                 hass.bus.async_fire(
                     EVENT_USER_MAPPING_WARNING,
@@ -724,6 +784,111 @@ def async_register_websocket_api(hass: HomeAssistant) -> None:
         hass.bus.async_fire(EVENT_COMPLETION_RECORDED, recorded_payload)
         nfc_service.dismiss_confirmation(attempt.id)
         connection.send_result(msg["id"], completion_record_to_dict(completion_record))
+
+    @websocket_api.websocket_command(
+        {
+            vol.Required("type"): f"{DOMAIN}/complete_due_instance",
+            vol.Required("due_instance_id"): cv.string,
+            vol.Optional("completed_at"): cv.string,
+        }
+    )
+    @websocket_api.async_response
+    async def ws_complete_due_instance(
+        hass: HomeAssistant,
+        connection: websocket_api.ActiveConnection,
+        msg: dict[str, Any],
+    ) -> None:
+        runtime_data = _get_runtime_data(connection, msg)
+        if runtime_data is None:
+            return
+
+        store: TaskStore = runtime_data["store"]
+        completion_service = runtime_data["completion"]
+        task_domain = runtime_data["task_domain"]
+
+        actor_ha_user_id = connection.user.id
+
+        try:
+            task_id, _due_date = msg["due_instance_id"].rsplit(":", 1)
+        except ValueError:
+            connection.send_error(
+                msg["id"],
+                "invalid_due_instance",
+                f"Due instance id {msg['due_instance_id']!r} is invalid.",
+            )
+            return
+
+        tasks = await _load_tasks(store)
+        task = next((candidate for candidate in tasks if candidate.id == task_id), None)
+        if task is None:
+            connection.send_error(
+                msg["id"],
+                "task_not_found",
+                f"Task {task_id!r} was not found.",
+            )
+            return
+
+        try:
+            due_instance = _resolve_due_instance(
+                task_domain,
+                task=task,
+                due_instance_id=msg["due_instance_id"],
+            )
+        except ValueError as err:
+            connection.send_error(msg["id"], "invalid_due_instance", str(err))
+            return
+
+        try:
+            completed_at = (
+                _parse_datetime(msg["completed_at"])
+                if "completed_at" in msg
+                else None
+            )
+        except ValueError as err:
+            connection.send_error(msg["id"], "invalid_completed_at", str(err))
+            return
+
+        history_before = len(completion_service.get_history())
+
+        try:
+            completion_record = completion_service.confirm_completion(
+                task=task,
+                due_instance=due_instance,
+                actor_ha_user_id=actor_ha_user_id,
+                source=CompletionSource.MANUAL,
+                completed_at=completed_at,
+            )
+        except TaskManagerError as err:
+            await _persist_latest_history_record_if_needed(
+                hass,
+                store,
+                completion_service,
+                history_before=history_before,
+            )
+            if isinstance(err, UnmappedUserError):
+                hass.bus.async_fire(
+                    EVENT_USER_MAPPING_WARNING,
+                    {
+                        "actor_ha_user_id": actor_ha_user_id,
+                        "task_id": task.id,
+                        "due_instance_id": due_instance.id,
+                    },
+                )
+            connection.send_error(
+                msg["id"],
+                (
+                    "mapping_required"
+                    if isinstance(err, UnmappedUserError)
+                    else "complete_due_instance_failed"
+                ),
+                str(err),
+            )
+            return
+
+        recorded_payload = completion_record_to_dict(completion_record)
+        await store.async_append_completion(recorded_payload)
+        hass.bus.async_fire(EVENT_COMPLETION_RECORDED, recorded_payload)
+        connection.send_result(msg["id"], recorded_payload)
 
     @websocket_api.websocket_command(
         {
@@ -784,8 +949,10 @@ def async_register_websocket_api(hass: HomeAssistant) -> None:
 
     websocket_api.async_register_command(hass, ws_pending_confirmations)
     websocket_api.async_register_command(hass, ws_profiles)
+    websocket_api.async_register_command(hass, ws_current_profile)
     websocket_api.async_register_command(hass, ws_tasks)
     websocket_api.async_register_command(hass, ws_due_instances)
     websocket_api.async_register_command(hass, ws_save_task)
     websocket_api.async_register_command(hass, ws_confirm_completion)
+    websocket_api.async_register_command(hass, ws_complete_due_instance)
     websocket_api.async_register_command(hass, ws_analytics)
