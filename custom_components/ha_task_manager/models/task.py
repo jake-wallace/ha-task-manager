@@ -3,19 +3,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import UTC, date, datetime
+from datetime import date, datetime
 from enum import StrEnum
 from uuid import uuid4
 
-
-def utc_now() -> datetime:
-    """Return a timezone-aware UTC timestamp."""
-    return datetime.now(UTC)
-
-
-def utc_today() -> date:
-    """Return today's date in UTC."""
-    return utc_now().date()
+from .time import utc_now
 
 
 class RecurrenceFrequency(StrEnum):
@@ -27,14 +19,14 @@ class RecurrenceFrequency(StrEnum):
     CUSTOM_DAYS = "custom_days"
 
 
-@dataclass
+@dataclass(kw_only=True)
 class SkipWindow:
     """Date range where a task recurrence should be skipped."""
 
+    start_date: date
+    end_date: date
     id: str = field(default_factory=lambda: str(uuid4()))
     label: str = ""
-    start_date: date = field(default_factory=utc_today)
-    end_date: date = field(default_factory=utc_today)
 
     def contains(self, value: date) -> bool:
         """Return whether the provided date falls within the skip window."""

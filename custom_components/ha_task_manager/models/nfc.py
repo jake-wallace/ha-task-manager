@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from uuid import uuid4
 
-from .task import utc_now
+from .time import utc_now
 
 
 @dataclass

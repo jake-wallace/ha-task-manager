@@ -7,7 +7,7 @@ from datetime import datetime
 from enum import StrEnum
 from uuid import uuid4
 
-from .task import utc_now
+from .time import utc_now
 
 
 class CompletionSource(StrEnum):
