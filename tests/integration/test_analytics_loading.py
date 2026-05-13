@@ -228,3 +228,50 @@ async def test_websocket_returns_clean_error_after_unload(
 
     assert response["success"] is False
     assert response["error"]["code"] == "integration_unavailable"
+
+
+async def test_profiles_returns_profile_list_contract(
+    enable_custom_integrations,
+    hass,
+    hass_ws_client,
+) -> None:
+    store = TaskStore(hass)
+    await store.async_save_profiles(
+        {
+            "profiles": [
+                {
+                    "id": "profile-alice",
+                    "display_name": "Alice",
+                    "avatar_url": "",
+                    "created_at": "2026-05-10T00:00:00+00:00",
+                }
+            ],
+            "mappings": [
+                {
+                    "id": "mapping-alice",
+                    "ha_user_id": "ha-alice",
+                    "profile_id": "profile-alice",
+                    "created_at": "2026-05-10T00:00:00+00:00",
+                }
+            ],
+        }
+    )
+
+    entry = MockConfigEntry(domain=DOMAIN, title="Task Manager")
+    entry.add_to_hass(hass)
+
+    assert await hass.config_entries.async_setup(entry.entry_id)
+
+    client = await hass_ws_client(hass)
+    await client.send_json_auto_id({"type": "ha_task_manager/profiles"})
+    response = await client.receive_json()
+
+    assert response["success"] is True
+    assert response["result"] == [
+        {
+            "id": "profile-alice",
+            "display_name": "Alice",
+            "avatar_url": "",
+            "created_at": "2026-05-10T00:00:00+00:00",
+        }
+    ]

@@ -326,6 +326,45 @@ async def _load_profiles(
     return profiles, mappings
 
 
+def _validate_unique_nfc_tag(
+    task: TaskDefinition,
+    tasks: list[TaskDefinition],
+    tag_mappings: list[NfcTagMapping],
+) -> None:
+    if not task.nfc_tag_id:
+        return
+
+    conflicting_task = next(
+        (
+            existing
+            for existing in tasks
+            if existing.id != task.id and existing.nfc_tag_id == task.nfc_tag_id
+        ),
+        None,
+    )
+    if conflicting_task is not None:
+        raise ValueError(
+            "NFC tag "
+            f"{task.nfc_tag_id!r} is already assigned to task "
+            f"{conflicting_task.id!r}."
+        )
+
+    conflicting_mapping = next(
+        (
+            mapping
+            for mapping in tag_mappings
+            if mapping.task_id != task.id and mapping.tag_id == task.nfc_tag_id
+        ),
+        None,
+    )
+    if conflicting_mapping is not None:
+        raise ValueError(
+            "NFC tag "
+            f"{task.nfc_tag_id!r} is already mapped to task "
+            f"{conflicting_mapping.task_id!r}."
+        )
+
+
 async def _load_tag_mappings(store: TaskStore) -> list[NfcTagMapping]:
     raw_nfc = await store.async_load_nfc()
     return [
@@ -455,17 +494,10 @@ def async_register_websocket_api(hass: HomeAssistant) -> None:
         if runtime_data is None:
             return
 
-        profiles, mappings = await _load_profiles(runtime_data["store"])
+        profiles, _mappings = await _load_profiles(runtime_data["store"])
         connection.send_result(
             msg["id"],
-            {
-                "profiles": [
-                    household_profile_to_dict(profile) for profile in profiles
-                ],
-                "mappings": [
-                    user_profile_mapping_to_dict(mapping) for mapping in mappings
-                ],
-            },
+            [household_profile_to_dict(profile) for profile in profiles],
         )
 
     @websocket_api.websocket_command({vol.Required("type"): f"{DOMAIN}/tasks"})
@@ -557,6 +589,13 @@ def async_register_websocket_api(hass: HomeAssistant) -> None:
             return
 
         tasks = await _load_tasks(store)
+        tag_mappings = await _load_tag_mappings(store)
+        try:
+            _validate_unique_nfc_tag(task, tasks, tag_mappings)
+        except ValueError as err:
+            connection.send_error(msg["id"], "invalid_task", str(err))
+            return
+
         stored_tasks = [existing for existing in tasks if existing.id != task.id]
         stored_tasks.append(task)
 

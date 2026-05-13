@@ -536,3 +536,89 @@ async def test_save_task_updates_persisted_nfc_mapping(
     assert stored_nfc["tag_mappings"][0]["tag_id"] == "tag-phone-2"
     assert stored_nfc["tag_mappings"][0]["task_id"] == "task-bathroom"
     assert stored_nfc["tag_mappings"][0]["label"] == "Clean bathroom"
+
+
+async def test_save_task_rejects_duplicate_nfc_tag_assignment(
+    enable_custom_integrations,
+    hass,
+    hass_ws_client,
+) -> None:
+    store = TaskStore(hass)
+    await store.async_save_tasks(
+        {
+            "tasks": [
+                _task_payload(),
+                {
+                    "id": "task-kitchen",
+                    "title": "Clean kitchen",
+                    "description": "",
+                    "recurrence": {
+                        "frequency": "daily",
+                        "days_of_week": [],
+                        "interval_days": 1,
+                        "day_of_month": None,
+                    },
+                    "skip_windows": [],
+                    "assigned_profile_id": "profile-alice",
+                    "nfc_tag_id": None,
+                    "active": True,
+                    "start_date": "2026-05-10",
+                    "created_at": "2026-05-10T00:00:00+00:00",
+                    "updated_at": "2026-05-10T00:00:00+00:00",
+                },
+            ]
+        }
+    )
+    await store.async_save_nfc(
+        {
+            "tag_mappings": [
+                {
+                    "id": "nfc-map-1",
+                    "tag_id": "tag-phone-1",
+                    "task_id": "task-bathroom",
+                    "label": "Bathroom tag",
+                    "created_at": "2026-05-10T00:00:00+00:00",
+                }
+            ]
+        }
+    )
+
+    entry = MockConfigEntry(domain=DOMAIN, title="Task Manager")
+    entry.add_to_hass(hass)
+
+    assert await hass.config_entries.async_setup(entry.entry_id)
+
+    client = await hass_ws_client(hass)
+    duplicate_tag_task = {
+        "id": "task-kitchen",
+        "title": "Clean kitchen",
+        "description": "",
+        "recurrence": {
+            "frequency": "daily",
+            "days_of_week": [],
+            "interval_days": 1,
+            "day_of_month": None,
+        },
+        "skip_windows": [],
+        "assigned_profile_id": "profile-alice",
+        "nfc_tag_id": "tag-phone-1",
+        "active": True,
+        "start_date": "2026-05-10",
+        "created_at": "2026-05-10T00:00:00+00:00",
+        "updated_at": "2026-05-11T00:00:00+00:00",
+    }
+
+    await client.send_json_auto_id(
+        {
+            "type": "ha_task_manager/save_task",
+            "task": duplicate_tag_task,
+        }
+    )
+    response = await client.receive_json()
+
+    assert response["success"] is False
+    assert response["error"]["code"] == "invalid_task"
+
+    stored_tasks = await store.async_load_tasks()
+
+    assert stored_tasks["tasks"][1]["nfc_tag_id"] is None
