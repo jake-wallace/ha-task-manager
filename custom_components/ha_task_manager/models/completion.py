@@ -22,6 +22,7 @@ class AttemptOutcome(StrEnum):
     """Outcome of a completion attempt."""
 
     CONFIRMED = "confirmed"
+    BLOCKED_DUPLICATE = "blocked_duplicate"
     BLOCKED_ASSIGNMENT = "blocked_assignment"
     BLOCKED_NO_MAPPING = "blocked_no_mapping"
 

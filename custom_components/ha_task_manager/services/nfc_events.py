@@ -72,6 +72,12 @@ class NfcEventService:
         if actionable_due_instance is None:
             raise NoActionableDueInstanceError(task.id)
 
+        existing_attempt = self._get_pending_attempt_for_due_instance(
+            actionable_due_instance.id
+        )
+        if existing_attempt is not None:
+            return existing_attempt
+
         attempt = CompletionAttempt(
             task_id=task.id,
             due_instance_id=actionable_due_instance.id,
@@ -98,6 +104,16 @@ class NfcEventService:
     def dismiss_confirmation(self, attempt_id: str) -> None:
         """Remove a pending confirmation attempt if it exists."""
         self._pending_attempts.pop(attempt_id, None)
+
+    def _get_pending_attempt_for_due_instance(
+        self,
+        due_instance_id: str,
+    ) -> CompletionAttempt | None:
+        for attempt in self._pending_attempts.values():
+            if attempt.due_instance_id == due_instance_id:
+                return deepcopy(attempt)
+
+        return None
 
     def register_task(self, task: TaskDefinition) -> None:
         """Register or replace a task that may be targeted by NFC."""

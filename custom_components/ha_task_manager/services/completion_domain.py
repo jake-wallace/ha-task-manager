@@ -8,6 +8,7 @@ from datetime import datetime
 
 from custom_components.ha_task_manager.exceptions import (
     AssignmentViolationError,
+    DuplicateCompletionError,
     InvalidCompletionTargetError,
     UnmappedUserError,
 )
@@ -49,6 +50,22 @@ class CompletionDomainService:
         """Confirm a completion attempt for the provided task due instance."""
         self._validate_due_instance(task=task, due_instance=due_instance)
         record_timestamp = completed_at or utc_now()
+
+        if self._is_due_instance_already_completed(due_instance.id):
+            blocked_record = CompletionRecord(
+                task_id=task.id,
+                due_instance_id=due_instance.id,
+                completed_at=record_timestamp,
+                actor_ha_user_id=actor_ha_user_id,
+                actor_profile_id=self._resolve_actor_profile_id(actor_ha_user_id),
+                source=source,
+                outcome=AttemptOutcome.BLOCKED_DUPLICATE,
+                blocked_reason=(
+                    f"Due instance {due_instance.id!r} has already been confirmed."
+                ),
+            )
+            self._history.append(blocked_record)
+            raise DuplicateCompletionError(task.id, due_instance.id)
 
         try:
             actor_profile = self._identity_mapping_service.resolve_profile(
@@ -100,6 +117,19 @@ class CompletionDomainService:
         )
         self._history.append(confirmed_record)
         return deepcopy(confirmed_record)
+
+    def _is_due_instance_already_completed(self, due_instance_id: str) -> bool:
+        return any(
+            record.due_instance_id == due_instance_id
+            and record.outcome == AttemptOutcome.CONFIRMED
+            for record in self._history
+        )
+
+    def _resolve_actor_profile_id(self, actor_ha_user_id: str) -> str:
+        try:
+            return self._identity_mapping_service.resolve_profile(actor_ha_user_id).id
+        except UnmappedUserError:
+            return ""
 
     def _validate_due_instance(
         self,

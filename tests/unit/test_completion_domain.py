@@ -4,6 +4,7 @@ import pytest
 
 from custom_components.ha_task_manager.exceptions import (
     AssignmentViolationError,
+    DuplicateCompletionError,
     InvalidCompletionTargetError,
     UnmappedUserError,
 )
@@ -100,6 +101,44 @@ def test_assigned_user_can_complete(
     assert record.actor_profile_id == "profile-alex"
     assert record.due_instance_id == due_instance.id
     assert completion_domain_service.get_history() == [record]
+
+
+def test_duplicate_confirmation_is_rejected_and_audited(
+    completion_domain_service: CompletionDomainService,
+) -> None:
+    task = build_task(assigned_profile_id="profile-alex")
+    due_instance = TaskDueInstance.build(
+        task_id=task.id,
+        due_date=date(2026, 5, 13),
+    )
+
+    first_record = completion_domain_service.confirm_completion(
+        task=task,
+        due_instance=due_instance,
+        actor_ha_user_id="ha-user-1",
+        source=CompletionSource.MANUAL,
+        completed_at=datetime(2026, 5, 13, 9, 0, tzinfo=UTC),
+    )
+
+    with pytest.raises(DuplicateCompletionError):
+        completion_domain_service.confirm_completion(
+            task=task,
+            due_instance=due_instance,
+            actor_ha_user_id="ha-user-1",
+            source=CompletionSource.MANUAL,
+            completed_at=datetime(2026, 5, 13, 9, 5, tzinfo=UTC),
+        )
+
+    history = completion_domain_service.get_history()
+
+    assert history[0] == first_record
+    assert [record.outcome for record in history] == [
+        AttemptOutcome.CONFIRMED,
+        AttemptOutcome.BLOCKED_DUPLICATE,
+    ]
+    assert len(
+        [record for record in history if record.outcome == AttemptOutcome.CONFIRMED]
+    ) == 1
 
 
 def test_non_assigned_user_raises_assignment_violation(

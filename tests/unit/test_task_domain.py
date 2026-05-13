@@ -37,6 +37,24 @@ def task_domain_service_fixture() -> TaskDomainService:
     return TaskDomainService()
 
 
+class RecordingTaskDomainService(TaskDomainService):
+    def __init__(self) -> None:
+        self.calls: list[tuple[date, int]] = []
+
+    def project_due_instances(
+        self,
+        task: TaskDefinition,
+        from_date: date,
+        horizon_days: int,
+    ) -> list:
+        self.calls.append((from_date, horizon_days))
+        return super().project_due_instances(
+            task=task,
+            from_date=from_date,
+            horizon_days=horizon_days,
+        )
+
+
 def test_weekly_expansion_produces_dates_and_deterministic_ids(
     task_domain_service: TaskDomainService,
 ) -> None:
@@ -402,3 +420,31 @@ def test_actionable_selection_returns_oldest_open_due_even_beyond_lookback(
     assert actionable is not None
     assert actionable.due_date == date(2026, 3, 1)
     assert actionable.id == "task-123:2026-03-01"
+
+
+def test_actionable_selection_uses_lookback_as_backlog_search_chunk() -> None:
+    task_domain_service = RecordingTaskDomainService()
+    task = build_task(
+        RecurrenceRule(
+            frequency=RecurrenceFrequency.DAILY,
+            interval_days=1,
+        ),
+        start_date=date(2026, 5, 1),
+    )
+
+    actionable = task_domain_service.select_actionable_due_instance(
+        task=task,
+        completed_due_instance_ids=set(),
+        as_of=date(2026, 5, 10),
+        lookback_days=3,
+        horizon_days=4,
+    )
+
+    assert actionable is not None
+    assert actionable.due_date == date(2026, 5, 1)
+    assert task_domain_service.calls == [
+        (date(2026, 5, 8), 3),
+        (date(2026, 5, 5), 3),
+        (date(2026, 5, 2), 3),
+        (date(2026, 5, 1), 1),
+    ]

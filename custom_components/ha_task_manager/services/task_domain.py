@@ -53,32 +53,81 @@ class TaskDomainService:
         lookback_days: int = 30,
         horizon_days: int = 60,
     ) -> TaskDueInstance | None:
-        """Return the next due instance that should be acted on, if any."""
-        normalized_horizon = max(horizon_days, 0)
-        search_start = task.start_date
-        search_end = max(as_of, task.start_date) + timedelta(days=normalized_horizon)
-        search_span = (search_end - search_start).days + 1
+        """Return the next actionable due instance.
 
+        ``lookback_days`` controls the size of each backlog search chunk while
+        preserving oldest-open semantics across the full task history.
+        """
+        normalized_lookback = max(lookback_days, 1)
+        normalized_horizon = max(horizon_days, 0)
+
+        oldest_open_instance = self._find_oldest_open_backlog_instance(
+            task=task,
+            completed_due_instance_ids=completed_due_instance_ids,
+            as_of=as_of,
+            lookback_days=normalized_lookback,
+        )
+        if oldest_open_instance is not None:
+            return oldest_open_instance
+
+        if normalized_horizon == 0:
+            return None
+
+        search_start = max(task.start_date, as_of + timedelta(days=1))
+        search_end = max(as_of, task.start_date) + timedelta(days=normalized_horizon)
+        if search_start > search_end:
+            return None
+
+        search_span = (search_end - search_start).days + 1
         projected_instances = self.project_due_instances(
             task=task,
             from_date=search_start,
             horizon_days=search_span,
         )
-        open_instances = [
-            instance
-            for instance in projected_instances
-            if not instance.skipped and instance.id not in completed_due_instance_ids
-        ]
 
-        for instance in open_instances:
-            if instance.due_date <= as_of:
-                return instance
-
-        for instance in open_instances:
-            if instance.due_date > as_of:
+        for instance in projected_instances:
+            if not instance.skipped and instance.id not in completed_due_instance_ids:
                 return instance
 
         return None
+
+    def _find_oldest_open_backlog_instance(
+        self,
+        *,
+        task: TaskDefinition,
+        completed_due_instance_ids: set[str],
+        as_of: date,
+        lookback_days: int,
+    ) -> TaskDueInstance | None:
+        if as_of < task.start_date:
+            return None
+
+        oldest_open_instance: TaskDueInstance | None = None
+        search_end = as_of
+
+        while search_end >= task.start_date:
+            chunk_start = max(
+                task.start_date,
+                search_end - timedelta(days=lookback_days - 1),
+            )
+            search_span = (search_end - chunk_start).days + 1
+            projected_instances = self.project_due_instances(
+                task=task,
+                from_date=chunk_start,
+                horizon_days=search_span,
+            )
+
+            for instance in projected_instances:
+                if (
+                    not instance.skipped
+                    and instance.id not in completed_due_instance_ids
+                ):
+                    oldest_open_instance = instance
+                    break
+
+            search_end = chunk_start - timedelta(days=1)
+
+        return oldest_open_instance
 
 
 def _validate_task(task: TaskDefinition) -> None:

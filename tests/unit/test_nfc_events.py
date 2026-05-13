@@ -118,6 +118,27 @@ def test_pending_confirmations_are_tracked(service: NfcEventService) -> None:
     assert pending == [attempt]
 
 
+def test_repeated_scans_reuse_existing_pending_attempt_for_same_due_instance(
+    service: NfcEventService,
+) -> None:
+    first_attempt = service.initiate_confirmation(
+        tag_id="tag-abc123",
+        actor_ha_user_id="ha-alice",
+        source=CompletionSource.NFC_PHONE,
+        as_of=date(2026, 5, 10),
+    )
+
+    second_attempt = service.initiate_confirmation(
+        tag_id="tag-abc123",
+        actor_ha_user_id="ha-alice",
+        source=CompletionSource.NFC_PHONE,
+        as_of=date(2026, 5, 10),
+    )
+
+    assert second_attempt == first_attempt
+    assert service.get_pending_confirmations() == [first_attempt]
+
+
 def test_dismiss_confirmation_removes_pending_attempt(service: NfcEventService) -> None:
     attempt = service.initiate_confirmation(
         tag_id="tag-abc123",

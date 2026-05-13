@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections import Counter
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from datetime import date, timedelta
 
 from custom_components.ha_task_manager.models import (
@@ -23,11 +23,16 @@ class AnalyticsService:
         profile_id: str,
         history: Iterable[CompletionRecord],
         projected_due_instances: Iterable[TaskDueInstance],
+        task_assignments: Mapping[str, str],
         as_of: date,
     ) -> ProfileAnalyticsSnapshot:
         """Compute a profile analytics snapshot from domain history and due data."""
         history_list = list(history)
-        due_instances = list(projected_due_instances)
+        due_instances = [
+            instance
+            for instance in projected_due_instances
+            if task_assignments.get(instance.task_id) == profile_id
+        ]
         confirmed_profile_records = [
             record
             for record in history_list

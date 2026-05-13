@@ -22,6 +22,21 @@ class AssignmentViolationError(TaskManagerError):
         )
 
 
+class DuplicateCompletionError(TaskManagerError):
+    """Raised when a due instance has already been confirmed."""
+
+    task_id: str
+    due_instance_id: str
+
+    def __init__(self, task_id: str, due_instance_id: str) -> None:
+        self.task_id = task_id
+        self.due_instance_id = due_instance_id
+        super().__init__(
+            f"Due instance {due_instance_id!r} for task {task_id!r} "
+            "has already been confirmed"
+        )
+
+
 class InvalidCompletionTargetError(TaskManagerError):
     """Raised when a completion points at the wrong or skipped due instance."""
 
