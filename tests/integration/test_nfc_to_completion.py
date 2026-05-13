@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.ha_task_manager.const import (
@@ -622,3 +624,132 @@ async def test_save_task_rejects_duplicate_nfc_tag_assignment(
     stored_tasks = await store.async_load_tasks()
 
     assert stored_tasks["tasks"][1]["nfc_tag_id"] is None
+
+
+async def test_runtime_ignores_stale_persisted_nfc_mapping_on_setup(
+    enable_custom_integrations,
+    hass,
+) -> None:
+    store = TaskStore(hass)
+    updated_task = _task_payload()
+    updated_task["nfc_tag_id"] = "tag-phone-2"
+    await store.async_save_tasks({"tasks": [updated_task]})
+    await store.async_save_nfc(
+        {
+            "tag_mappings": [
+                {
+                    "id": "nfc-map-stale",
+                    "tag_id": "tag-phone-1",
+                    "task_id": "task-bathroom",
+                    "label": "Stale bathroom tag",
+                    "created_at": "2026-05-10T00:00:00+00:00",
+                }
+            ]
+        }
+    )
+
+    entry = MockConfigEntry(domain=DOMAIN, title="Task Manager")
+    entry.add_to_hass(hass)
+
+    assert await hass.config_entries.async_setup(entry.entry_id)
+
+    mapping_events = []
+    hass.bus.async_listen(
+        EVENT_NFC_TAG_MAPPING_REQUESTED,
+        lambda event: mapping_events.append(event.data),
+    )
+
+    hass.bus.async_fire(
+        EVENT_NFC_SCANNED,
+        {
+            "tag_id": "tag-phone-1",
+            "actor_ha_user_id": "ha-alice",
+            "source": "phone",
+        },
+    )
+    await hass.async_block_till_done()
+
+    assert mapping_events == [
+        {
+            "tag_id": "tag-phone-1",
+            "actor_ha_user_id": "ha-alice",
+            "source": "nfc_phone",
+        }
+    ]
+
+
+async def test_concurrent_save_task_requests_are_serialized(
+    enable_custom_integrations,
+    hass,
+    hass_ws_client,
+) -> None:
+    store = TaskStore(hass)
+    await store.async_save_tasks({"tasks": []})
+
+    entry = MockConfigEntry(domain=DOMAIN, title="Task Manager")
+    entry.add_to_hass(hass)
+
+    assert await hass.config_entries.async_setup(entry.entry_id)
+
+    runtime_store = hass.data[DOMAIN][entry.entry_id]["store"]
+    original_save_tasks = runtime_store.async_save_tasks
+    active_saves = 0
+    max_active_saves = 0
+
+    async def tracked_save_tasks(data):
+        nonlocal active_saves, max_active_saves
+        active_saves += 1
+        max_active_saves = max(max_active_saves, active_saves)
+        try:
+            await asyncio.sleep(0.05)
+            await original_save_tasks(data)
+        finally:
+            active_saves -= 1
+
+    runtime_store.async_save_tasks = tracked_save_tasks
+
+    client_one = await hass_ws_client(hass)
+    client_two = await hass_ws_client(hass)
+    bathroom_task = _task_payload()
+    kitchen_task = {
+        "id": "task-kitchen",
+        "title": "Clean kitchen",
+        "description": "",
+        "recurrence": {
+            "frequency": "daily",
+            "days_of_week": [],
+            "interval_days": 1,
+            "day_of_month": None,
+        },
+        "skip_windows": [],
+        "assigned_profile_id": "profile-alice",
+        "nfc_tag_id": "tag-phone-2",
+        "active": True,
+        "start_date": "2026-05-10",
+        "created_at": "2026-05-10T00:00:00+00:00",
+        "updated_at": "2026-05-10T00:00:00+00:00",
+    }
+
+    await asyncio.gather(
+        client_one.send_json_auto_id(
+            {"type": "ha_task_manager/save_task", "task": bathroom_task}
+        ),
+        client_two.send_json_auto_id(
+            {"type": "ha_task_manager/save_task", "task": kitchen_task}
+        ),
+    )
+    responses = await asyncio.gather(
+        client_one.receive_json(),
+        client_two.receive_json(),
+    )
+
+    assert responses[0]["success"] is True
+    assert responses[1]["success"] is True
+    assert max_active_saves == 1
+
+    stored_tasks = await store.async_load_tasks()
+
+    assert {task["id"] for task in stored_tasks["tasks"]} == {
+        "task-bathroom",
+        "task-kitchen",
+    }

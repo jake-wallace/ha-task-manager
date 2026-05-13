@@ -17,7 +17,7 @@ from .const import (
     EVENT_NFC_TAG_MAPPING_REQUESTED,
 )
 from .exceptions import TaskManagerError, UnknownNfcTagError
-from .models import AttemptOutcome, CompletionSource
+from .models import AttemptOutcome, CompletionSource, NfcTagMapping, TaskDefinition
 from .panel import async_register_task_manager_panel
 from .services.analytics import AnalyticsService
 from .services.completion_domain import CompletionDomainService
@@ -30,7 +30,6 @@ from .websocket_api import (
     completion_attempt_to_dict,
     completion_record_from_dict,
     household_profile_from_dict,
-    nfc_tag_mapping_from_dict,
     task_definition_from_dict,
     user_profile_mapping_from_dict,
 )
@@ -77,6 +76,19 @@ def _confirmed_due_instance_ids(
         for record in completion_service.get_history()
         if record.outcome == AttemptOutcome.CONFIRMED
     }
+
+
+def _derive_tag_mappings(tasks: list[TaskDefinition]) -> list[NfcTagMapping]:
+    return [
+        NfcTagMapping(
+            tag_id=task.nfc_tag_id,
+            task_id=task.id,
+            label=task.title,
+            created_at=task.updated_at,
+        )
+        for task in tasks
+        if task.nfc_tag_id
+    ]
 
 
 def _register_nfc_event_listener(
@@ -166,7 +178,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     raw_tasks = await store.async_load_tasks()
     raw_profiles = await store.async_load_profiles()
-    raw_nfc = await store.async_load_nfc()
     raw_history = await store.async_load_completions()
 
     tasks = [
@@ -181,10 +192,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         user_profile_mapping_from_dict(raw_mapping)
         for raw_mapping in raw_profiles.get("mappings", [])
     ]
-    tag_mappings = [
-        nfc_tag_mapping_from_dict(raw_mapping)
-        for raw_mapping in raw_nfc.get("tag_mappings", [])
-    ]
+    tag_mappings = _derive_tag_mappings(tasks)
     history = [
         completion_record_from_dict(raw_record) for raw_record in raw_history
     ]

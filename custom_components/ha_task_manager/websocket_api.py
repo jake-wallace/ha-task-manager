@@ -329,7 +329,6 @@ async def _load_profiles(
 def _validate_unique_nfc_tag(
     task: TaskDefinition,
     tasks: list[TaskDefinition],
-    tag_mappings: list[NfcTagMapping],
 ) -> None:
     if not task.nfc_tag_id:
         return
@@ -349,27 +348,27 @@ def _validate_unique_nfc_tag(
             f"{conflicting_task.id!r}."
         )
 
-    conflicting_mapping = next(
-        (
-            mapping
-            for mapping in tag_mappings
-            if mapping.task_id != task.id and mapping.tag_id == task.nfc_tag_id
-        ),
-        None,
-    )
-    if conflicting_mapping is not None:
-        raise ValueError(
-            "NFC tag "
-            f"{task.nfc_tag_id!r} is already mapped to task "
-            f"{conflicting_mapping.task_id!r}."
-        )
-
 
 async def _load_tag_mappings(store: TaskStore) -> list[NfcTagMapping]:
     raw_nfc = await store.async_load_nfc()
     return [
         nfc_tag_mapping_from_dict(raw_mapping)
         for raw_mapping in raw_nfc.get("tag_mappings", [])
+    ]
+
+
+def _derive_task_tag_mappings(
+    tasks: list[TaskDefinition],
+) -> list[NfcTagMapping]:
+    return [
+        NfcTagMapping(
+            tag_id=task.nfc_tag_id,
+            task_id=task.id,
+            label=task.title,
+            created_at=task.updated_at,
+        )
+        for task in tasks
+        if task.nfc_tag_id
     ]
 
 
@@ -590,9 +589,8 @@ def async_register_websocket_api(hass: HomeAssistant) -> None:
 
         async with runtime_data["task_save_lock"]:
             tasks = await _load_tasks(store)
-            tag_mappings = await _load_tag_mappings(store)
             try:
-                _validate_unique_nfc_tag(task, tasks, tag_mappings)
+                _validate_unique_nfc_tag(task, tasks)
             except ValueError as err:
                 connection.send_error(msg["id"], "invalid_task", str(err))
                 return
@@ -609,11 +607,11 @@ def async_register_websocket_api(hass: HomeAssistant) -> None:
                 }
             )
 
-            tag_mappings = await _sync_task_nfc_mappings(store, task)
+            await _sync_task_nfc_mappings(store, task)
             _rebuild_nfc_service(
                 runtime_data,
                 tasks=stored_tasks,
-                tag_mappings=tag_mappings,
+                tag_mappings=_derive_task_tag_mappings(stored_tasks),
             )
 
         connection.send_result(msg["id"], task_definition_to_dict(task))
