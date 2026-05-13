@@ -32,6 +32,9 @@ type PanelView = "my-tasks" | "household" | "analytics" | "admin";
 
 interface HomeAssistantLike {
   callWS: <T>(message: Record<string, unknown>) => Promise<T>;
+  user?: {
+    id?: string;
+  };
 }
 
 interface NavigationTab {
@@ -138,6 +141,8 @@ export class HaTaskManagerPanel extends LitElement {
   private pendingPollHandle: number | null = null;
 
   private hasLoadedInitialData = false;
+
+  private lastLoadedUserId = "";
 
   private snoozedPendingAttemptIds = new Set<string>();
 
@@ -315,9 +320,13 @@ export class HaTaskManagerPanel extends LitElement {
 
   protected updated(changedProperties: Map<string, unknown>): void {
     if (changedProperties.has("hass") && this.hass) {
-      this.hasLoadedInitialData = true;
-      void this.loadCoreData();
-      this.startPendingPolling();
+      const currentUserId = this.hass.user?.id ?? "";
+      if (!this.hasLoadedInitialData || this.lastLoadedUserId !== currentUserId) {
+        this.hasLoadedInitialData = true;
+        this.lastLoadedUserId = currentUserId;
+        void this.loadCoreData();
+        this.startPendingPolling();
+      }
     }
 
     if (changedProperties.has("currentView") && this.currentView === "analytics") {

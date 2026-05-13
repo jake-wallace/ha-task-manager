@@ -303,6 +303,17 @@ def _filter_pending_confirmations(
     return valid_attempts
 
 
+def _pending_confirmations_for_user(
+    runtime_data: dict[str, Any],
+    ha_user_id: str,
+) -> list[CompletionAttempt]:
+    return [
+        attempt
+        for attempt in runtime_data["nfc"].get_pending_confirmations()
+        if attempt.actor_ha_user_id == ha_user_id
+    ]
+
+
 async def _load_tasks(store: TaskStore) -> list[TaskDefinition]:
     raw_tasks = await store.async_load_tasks()
     return [
@@ -493,7 +504,7 @@ def async_register_websocket_api(hass: HomeAssistant) -> None:
         if runtime_data is None:
             return
 
-        pending = runtime_data["nfc"].get_pending_confirmations()
+        pending = _pending_confirmations_for_user(runtime_data, connection.user.id)
         connection.send_result(
             msg["id"],
             [completion_attempt_to_dict(attempt) for attempt in pending],
@@ -698,7 +709,7 @@ def async_register_websocket_api(hass: HomeAssistant) -> None:
         task_domain = runtime_data["task_domain"]
 
         attempt = nfc_service.get_pending_confirmation(msg["attempt_id"])
-        if attempt is None:
+        if attempt is None or attempt.actor_ha_user_id != connection.user.id:
             connection.send_error(
                 msg["id"],
                 "attempt_not_found",

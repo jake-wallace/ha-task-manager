@@ -14,7 +14,9 @@ async def test_reader_pending_confirmation_and_completion_follow_same_path(
     enable_custom_integrations,
     hass,
     hass_ws_client,
+    hass_admin_user,
 ) -> None:
+    user_id = hass_admin_user.id
     store = TaskStore(hass)
     await store.async_save_tasks(
         {
@@ -53,7 +55,7 @@ async def test_reader_pending_confirmation_and_completion_follow_same_path(
             "mappings": [
                 {
                     "id": "mapping-alice",
-                    "ha_user_id": "reader-ha-alice",
+                    "ha_user_id": user_id,
                     "profile_id": "profile-alice",
                     "created_at": "2026-05-10T00:00:00+00:00",
                 }
@@ -83,7 +85,7 @@ async def test_reader_pending_confirmation_and_completion_follow_same_path(
         EVENT_NFC_SCANNED,
         {
             "tag_id": "tag-reader-1",
-            "actor_ha_user_id": "reader-ha-alice",
+            "actor_ha_user_id": user_id,
             "source": "reader",
             "as_of": "2026-05-10",
         },
@@ -122,7 +124,9 @@ async def test_failed_confirmation_dismisses_pending_attempt(
     enable_custom_integrations,
     hass,
     hass_ws_client,
+    hass_admin_user,
 ) -> None:
+    user_id = hass_admin_user.id
     store = TaskStore(hass)
     await store.async_save_tasks(
         {
@@ -190,7 +194,7 @@ async def test_failed_confirmation_dismisses_pending_attempt(
         EVENT_NFC_SCANNED,
         {
             "tag_id": "tag-reader-1",
-            "actor_ha_user_id": "reader-ha-alice",
+            "actor_ha_user_id": user_id,
             "source": "reader",
             "as_of": "2026-05-10",
         },
@@ -227,7 +231,7 @@ async def test_failed_confirmation_dismisses_pending_attempt(
     assert stored_history[0]["outcome"] == "blocked_no_mapping"
     assert mapping_warning_events == [
         {
-            "actor_ha_user_id": "reader-ha-alice",
+            "actor_ha_user_id": user_id,
             "task_id": "task-trash",
             "attempt_id": attempt_id,
         }
@@ -238,7 +242,9 @@ async def test_invalid_completed_at_returns_structured_error(
     enable_custom_integrations,
     hass,
     hass_ws_client,
+    hass_admin_user,
 ) -> None:
+    user_id = hass_admin_user.id
     store = TaskStore(hass)
     await store.async_save_tasks(
         {
@@ -277,7 +283,7 @@ async def test_invalid_completed_at_returns_structured_error(
             "mappings": [
                 {
                     "id": "mapping-alice",
-                    "ha_user_id": "reader-ha-alice",
+                    "ha_user_id": user_id,
                     "profile_id": "profile-alice",
                     "created_at": "2026-05-10T00:00:00+00:00",
                 }
@@ -307,7 +313,7 @@ async def test_invalid_completed_at_returns_structured_error(
         EVENT_NFC_SCANNED,
         {
             "tag_id": "tag-reader-1",
-            "actor_ha_user_id": "reader-ha-alice",
+            "actor_ha_user_id": user_id,
             "source": "reader",
             "as_of": "2026-05-10",
         },

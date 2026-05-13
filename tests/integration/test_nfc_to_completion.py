@@ -37,7 +37,9 @@ async def test_phone_nfc_scan_to_confirmed_completion(
     enable_custom_integrations,
     hass,
     hass_ws_client,
+    hass_admin_user,
 ) -> None:
+    user_id = hass_admin_user.id
     store = TaskStore(hass)
     await store.async_save_tasks({"tasks": [_task_payload()]})
     await store.async_save_profiles(
@@ -53,7 +55,7 @@ async def test_phone_nfc_scan_to_confirmed_completion(
             "mappings": [
                 {
                     "id": "mapping-alice",
-                    "ha_user_id": "ha-alice",
+                    "ha_user_id": user_id,
                     "profile_id": "profile-alice",
                     "created_at": "2026-05-10T00:00:00+00:00",
                 }
@@ -83,7 +85,7 @@ async def test_phone_nfc_scan_to_confirmed_completion(
         EVENT_NFC_SCANNED,
         {
             "tag_id": "tag-phone-1",
-            "actor_ha_user_id": "ha-alice",
+            "actor_ha_user_id": user_id,
             "source": "phone",
             "as_of": "2026-05-10",
         },
@@ -101,7 +103,7 @@ async def test_phone_nfc_scan_to_confirmed_completion(
             "id": pending_response["result"][0]["id"],
             "task_id": "task-bathroom",
             "due_instance_id": "task-bathroom:2026-05-10",
-            "actor_ha_user_id": "ha-alice",
+                "actor_ha_user_id": user_id,
             "source": "nfc_phone",
             "initiated_at": pending_response["result"][0]["initiated_at"],
         }
@@ -137,7 +139,7 @@ async def test_phone_nfc_scan_to_confirmed_completion(
             "task_id": "task-bathroom",
             "due_instance_id": "task-bathroom:2026-05-10",
             "completed_at": "2026-05-10T09:30:00+00:00",
-            "actor_ha_user_id": "ha-alice",
+            "actor_ha_user_id": user_id,
             "actor_profile_id": "profile-alice",
             "source": "nfc_phone",
             "outcome": "confirmed",
@@ -150,7 +152,9 @@ async def test_phone_nfc_scan_uses_rebuilt_runtime_service_after_task_save(
     enable_custom_integrations,
     hass,
     hass_ws_client,
+    hass_admin_user,
 ) -> None:
+    user_id = hass_admin_user.id
     store = TaskStore(hass)
     await store.async_save_tasks({"tasks": []})
     await store.async_save_profiles(
@@ -166,7 +170,7 @@ async def test_phone_nfc_scan_uses_rebuilt_runtime_service_after_task_save(
             "mappings": [
                 {
                     "id": "mapping-alice",
-                    "ha_user_id": "ha-alice",
+                    "ha_user_id": user_id,
                     "profile_id": "profile-alice",
                     "created_at": "2026-05-10T00:00:00+00:00",
                 }
@@ -208,7 +212,7 @@ async def test_phone_nfc_scan_uses_rebuilt_runtime_service_after_task_save(
         EVENT_NFC_SCANNED,
         {
             "tag_id": "tag-phone-1",
-            "actor_ha_user_id": "ha-alice",
+            "actor_ha_user_id": user_id,
             "source": "phone",
             "as_of": "2026-05-10",
         },
@@ -299,7 +303,9 @@ async def test_stale_pending_confirmation_is_rejected_after_task_edit(
     enable_custom_integrations,
     hass,
     hass_ws_client,
+    hass_admin_user,
 ) -> None:
+    user_id = hass_admin_user.id
     store = TaskStore(hass)
     original_task = _task_payload()
     await store.async_save_tasks({"tasks": [original_task]})
@@ -316,7 +322,7 @@ async def test_stale_pending_confirmation_is_rejected_after_task_edit(
             "mappings": [
                 {
                     "id": "mapping-alice",
-                    "ha_user_id": "ha-alice",
+                    "ha_user_id": user_id,
                     "profile_id": "profile-alice",
                     "created_at": "2026-05-10T00:00:00+00:00",
                 }
@@ -346,7 +352,7 @@ async def test_stale_pending_confirmation_is_rejected_after_task_edit(
         EVENT_NFC_SCANNED,
         {
             "tag_id": "tag-phone-1",
-            "actor_ha_user_id": "ha-alice",
+            "actor_ha_user_id": user_id,
             "source": "phone",
             "as_of": "2026-05-10",
         },
@@ -400,7 +406,9 @@ async def test_disabling_task_clears_pending_confirmation(
     enable_custom_integrations,
     hass,
     hass_ws_client,
+    hass_admin_user,
 ) -> None:
+    user_id = hass_admin_user.id
     store = TaskStore(hass)
     await store.async_save_tasks({"tasks": [_task_payload()]})
     await store.async_save_profiles(
@@ -416,7 +424,7 @@ async def test_disabling_task_clears_pending_confirmation(
             "mappings": [
                 {
                     "id": "mapping-alice",
-                    "ha_user_id": "ha-alice",
+                    "ha_user_id": user_id,
                     "profile_id": "profile-alice",
                     "created_at": "2026-05-10T00:00:00+00:00",
                 }
@@ -446,7 +454,7 @@ async def test_disabling_task_clears_pending_confirmation(
         EVENT_NFC_SCANNED,
         {
             "tag_id": "tag-phone-1",
-            "actor_ha_user_id": "ha-alice",
+            "actor_ha_user_id": user_id,
             "source": "phone",
             "as_of": "2026-05-10",
         },

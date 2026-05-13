@@ -94729,6 +94729,7 @@ let HaTaskManagerPanel = class HaTaskManagerPanel extends i$1 {
         this.taskBuilderErrorMessage = "";
         this.pendingPollHandle = null;
         this.hasLoadedInitialData = false;
+        this.lastLoadedUserId = "";
         this.snoozedPendingAttemptIds = new Set();
         this.reviewPendingConfirmations = () => {
             if (this.pendingConfirmations.length === 0) {
@@ -94835,9 +94836,13 @@ let HaTaskManagerPanel = class HaTaskManagerPanel extends i$1 {
     }
     updated(changedProperties) {
         if (changedProperties.has("hass") && this.hass) {
-            this.hasLoadedInitialData = true;
-            void this.loadCoreData();
-            this.startPendingPolling();
+            const currentUserId = this.hass.user?.id ?? "";
+            if (!this.hasLoadedInitialData || this.lastLoadedUserId !== currentUserId) {
+                this.hasLoadedInitialData = true;
+                this.lastLoadedUserId = currentUserId;
+                void this.loadCoreData();
+                this.startPendingPolling();
+            }
         }
         if (changedProperties.has("currentView") && this.currentView === "analytics") {
             void this.loadAnalytics();
