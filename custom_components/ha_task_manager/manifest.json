@@ -1,0 +1,11 @@
+{
+  "domain": "ha_task_manager",
+  "name": "HA Task Manager",
+  "version": "0.1.0",
+  "documentation": "https://example.com/ha-task-manager",
+  "requirements": [],
+  "dependencies": [],
+  "codeowners": [],
+  "config_flow": true,
+  "iot_class": "local_push"
+}
