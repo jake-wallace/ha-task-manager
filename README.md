@@ -88,6 +88,19 @@ tests/
    cd frontend && npm run build
    ```
 
+### Installation (HACS)
+
+1. In Home Assistant, open **HACS -> Integrations -> menu (top-right) -> Custom repositories**.
+2. Add this GitHub repository URL as category `Integration`.
+3. Install **HA Task Manager** from HACS and restart Home Assistant.
+
+Versioning notes:
+
+- `hacs.json` currently sets `hide_default_branch` to `false`, so HACS can install from the default branch while releases are being established.
+- If you switch `hide_default_branch` to `true`, HACS only shows installable versions from published GitHub releases.
+- Publish a GitHub release for each integration update once you hide the default branch.
+- Use a release tag version HACS can parse (for example `0.1.0` or `v0.1.0`) and keep it aligned with `custom_components/ha_task_manager/manifest.json` `version`.
+
 ## Testing
 
 Tests are organised into three layers:
