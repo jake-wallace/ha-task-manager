@@ -8,14 +8,16 @@ from homeassistant.components import panel_custom
 from homeassistant.components.http import StaticPathConfig
 from homeassistant.core import HomeAssistant
 
+from .const import INTEGRATION_VERSION
+
 STATIC_URL_BASE = "/ha_task_manager_static"
 PANEL_MODULE = "ha-task-manager-panel.js"
 PANEL_URL_PATH = "ha_task_manager"
 
 
 def _panel_module_url() -> str:
-    """Return panel module URL without event-loop file I/O."""
-    return f"{STATIC_URL_BASE}/{PANEL_MODULE}"
+    """Return panel module URL with an explicit release version query."""
+    return f"{STATIC_URL_BASE}/{PANEL_MODULE}?v={INTEGRATION_VERSION}"
 
 
 async def async_register_task_manager_panel(hass: HomeAssistant) -> None:

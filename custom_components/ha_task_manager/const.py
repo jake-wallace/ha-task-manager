@@ -1,6 +1,7 @@
 """Constants for the HA Task Manager integration."""
 
 DOMAIN = "ha_task_manager"
+INTEGRATION_VERSION = "0.1.1"
 STORAGE_VERSION = 1
 
 STORAGE_KEY_TASKS = f"{DOMAIN}_tasks"

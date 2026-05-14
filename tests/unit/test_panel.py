@@ -26,7 +26,7 @@ async def test_register_panel_exposes_existing_module_url() -> None:
 
     register_panel.assert_awaited_once()
     assert register_panel.await_args.kwargs["module_url"] == (
-        f"{panel.STATIC_URL_BASE}/{panel.PANEL_MODULE}"
+        f"{panel.STATIC_URL_BASE}/{panel.PANEL_MODULE}?v={panel.INTEGRATION_VERSION}"
     )
     assert register_panel.await_args.kwargs["sidebar_title"] == "Home Tasks"
 

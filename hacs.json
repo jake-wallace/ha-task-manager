@@ -1,7 +1,7 @@
 {
   "name": "HA Task Manager",
   "content_in_root": false,
-  "hide_default_branch": false,
+  "hide_default_branch": true,
   "domains": [
     "ha_task_manager"
   ]
