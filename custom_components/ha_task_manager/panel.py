@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 from homeassistant.components import panel_custom
@@ -15,18 +14,8 @@ PANEL_URL_PATH = "ha_task_manager"
 
 
 def _panel_module_url() -> str:
-    """Return panel module URL with a version query to avoid stale browser cache."""
-    manifest_path = Path(__file__).with_name("manifest.json")
-    manifest_version = "dev"
-    try:
-        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        version_value = manifest.get("version")
-        if isinstance(version_value, str) and version_value:
-            manifest_version = version_value
-    except (OSError, ValueError, TypeError):
-        pass
-
-    return f"{STATIC_URL_BASE}/{PANEL_MODULE}?v={manifest_version}"
+    """Return panel module URL without event-loop file I/O."""
+    return f"{STATIC_URL_BASE}/{PANEL_MODULE}"
 
 
 async def async_register_task_manager_panel(hass: HomeAssistant) -> None:
