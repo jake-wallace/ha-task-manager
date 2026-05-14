@@ -101,9 +101,6 @@ Run all tests:
 pytest tests/
 ```
 
-## Design Documentation
-
-Design spec and planning documents are kept locally under `docs/` and are not version-controlled. See `docs/superpowers/specs/` for the approved design spec.
 
 ## Non-Functional Requirements
 
