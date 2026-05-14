@@ -25,6 +25,7 @@ async def test_register_panel_exposes_existing_module_url() -> None:
     assert Path(static_path.path, panel.PANEL_MODULE).exists()
 
     register_panel.assert_awaited_once()
-    assert register_panel.await_args.kwargs["module_url"] == (
-        f"{panel.STATIC_URL_BASE}/{panel.PANEL_MODULE}"
+    assert register_panel.await_args.kwargs["module_url"].startswith(
+        f"{panel.STATIC_URL_BASE}/{panel.PANEL_MODULE}?v="
     )
+    assert register_panel.await_args.kwargs["sidebar_title"] == "Home Tasks"

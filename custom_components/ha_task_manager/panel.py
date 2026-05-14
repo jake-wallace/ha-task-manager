@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from homeassistant.components import panel_custom
@@ -13,6 +14,21 @@ PANEL_MODULE = "ha-task-manager-panel.js"
 PANEL_URL_PATH = "ha_task_manager"
 
 
+def _panel_module_url() -> str:
+    """Return panel module URL with a version query to avoid stale browser cache."""
+    manifest_path = Path(__file__).with_name("manifest.json")
+    manifest_version = "dev"
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        version_value = manifest.get("version")
+        if isinstance(version_value, str) and version_value:
+            manifest_version = version_value
+    except (OSError, ValueError, TypeError):
+        pass
+
+    return f"{STATIC_URL_BASE}/{PANEL_MODULE}?v={manifest_version}"
+
+
 async def async_register_task_manager_panel(hass: HomeAssistant) -> None:
     """Register the sidebar panel and static asset path."""
     if hass.http is None:
@@ -20,16 +36,16 @@ async def async_register_task_manager_panel(hass: HomeAssistant) -> None:
 
     frontend_dir = Path(__file__).parent / "frontend"
     await hass.http.async_register_static_paths(
-        [StaticPathConfig(STATIC_URL_BASE, str(frontend_dir), cache_headers=True)]
+        [StaticPathConfig(STATIC_URL_BASE, str(frontend_dir), cache_headers=False)]
     )
     await panel_custom.async_register_panel(
         hass=hass,
         frontend_url_path=PANEL_URL_PATH,
         config_panel_domain="ha_task_manager",
         webcomponent_name="ha-task-manager-panel",
-        sidebar_title="Tasks",
+        sidebar_title="Home Tasks",
         sidebar_icon="mdi:checkbox-marked-circle",
-        module_url=f"{STATIC_URL_BASE}/{PANEL_MODULE}",
+        module_url=_panel_module_url(),
         embed_iframe=False,
         require_admin=False,
     )
