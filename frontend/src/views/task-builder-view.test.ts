@@ -162,4 +162,33 @@ describe("task-manager-task-builder-view", () => {
       { value: "tag-laundry-room", label: "tag-laundry-room" },
     ]);
   });
+
+  it("shows an actionable error when submitting with no assignable profiles", async () => {
+    const element = document.createElement("task-manager-task-builder-view") as TaskBuilderView;
+
+    document.body.append(element);
+    await element.updateComplete;
+
+    const titleInput = element.shadowRoot?.querySelector("input[required]") as HTMLInputElement | null;
+    const startDateInput = element.shadowRoot?.querySelector("input[type='date']") as HTMLInputElement | null;
+    const form = element.shadowRoot?.querySelector("form") as HTMLFormElement | null;
+
+    titleInput!.value = "Laundry";
+    titleInput!.dispatchEvent(new Event("input"));
+    startDateInput!.value = "2026-05-16";
+    startDateInput!.dispatchEvent(new Event("input"));
+
+    const saveTaskEvents: CustomEvent[] = [];
+    element.addEventListener("save-task-request", (event) => {
+      saveTaskEvents.push(event as CustomEvent);
+    });
+
+    form?.requestSubmit();
+    await element.updateComplete;
+
+    const errorMessage = element.shadowRoot?.querySelector(".error")?.textContent ?? "";
+
+    expect(saveTaskEvents).toHaveLength(0);
+    expect(errorMessage).toContain("Import at least one user profile in Setup before creating tasks.");
+  });
 });

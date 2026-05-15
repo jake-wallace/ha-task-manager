@@ -416,7 +416,7 @@ export class TaskBuilderView extends LitElement {
             ${this.statusMessage ? html`<div class="success">${this.statusMessage}</div>` : html``}
             ${this.errorMessage || this.localError ? html`<div class="error">${this.errorMessage || this.localError}</div>` : html``}
           </div>
-          <form @submit=${this.handleSubmit}>
+          <form @submit=${this.handleSubmit} novalidate>
             <div class="row">
               <label>
                 Title
@@ -430,6 +430,9 @@ export class TaskBuilderView extends LitElement {
                   @change=${this.handleTextInput("assignedProfileId")}
                   required
                 >
+                  ${this.profiles.length === 0
+                    ? html`<option value="">Import a profile in Setup first</option>`
+                    : html``}
                   ${this.profiles.map(
                     (profile) => html`
                       <option value=${profile.id}>${this.renderProfileLabel(profile)}</option>
@@ -803,6 +806,9 @@ export class TaskBuilderView extends LitElement {
   }
 
   private validateForm(): string {
+    if (this.profiles.length === 0) {
+      return "Import at least one user profile in Setup before creating tasks.";
+    }
     if (!this.formState.title.trim()) {
       return "Task title is required.";
     }

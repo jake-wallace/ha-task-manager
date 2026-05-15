@@ -93336,7 +93336,7 @@ let TaskBuilderView = class TaskBuilderView extends i$1 {
             ${this.statusMessage ? b `<div class="success">${this.statusMessage}</div>` : b ``}
             ${this.errorMessage || this.localError ? b `<div class="error">${this.errorMessage || this.localError}</div>` : b ``}
           </div>
-          <form @submit=${this.handleSubmit}>
+          <form @submit=${this.handleSubmit} novalidate>
             <div class="row">
               <label>
                 Title
@@ -93350,6 +93350,9 @@ let TaskBuilderView = class TaskBuilderView extends i$1 {
                   @change=${this.handleTextInput("assignedProfileId")}
                   required
                 >
+                  ${this.profiles.length === 0
+            ? b `<option value="">Import a profile in Setup first</option>`
+            : b ``}
                   ${this.profiles.map((profile) => b `
                       <option value=${profile.id}>${this.renderProfileLabel(profile)}</option>
                     `)}
@@ -93672,6 +93675,9 @@ let TaskBuilderView = class TaskBuilderView extends i$1 {
         }));
     }
     validateForm() {
+        if (this.profiles.length === 0) {
+            return "Import at least one user profile in Setup before creating tasks.";
+        }
         if (!this.formState.title.trim()) {
             return "Task title is required.";
         }
