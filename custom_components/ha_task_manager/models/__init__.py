@@ -7,8 +7,8 @@ from .completion import (
     CompletionRecord,
     CompletionSource,
 )
-from .identity import HouseholdProfile, UserProfileMapping
-from .nfc import NfcTagMapping
+from .identity import HaUserSummary, HouseholdProfile, UserProfileMapping
+from .nfc import NfcDiscoveryEntry, NfcTagMapping
 from .task import (
     RecurrenceFrequency,
     RecurrenceRule,
@@ -22,7 +22,9 @@ __all__ = [
     "CompletionAttempt",
     "CompletionRecord",
     "CompletionSource",
+    "HaUserSummary",
     "HouseholdProfile",
+    "NfcDiscoveryEntry",
     "NfcTagMapping",
     "ProfileAnalyticsSnapshot",
     "RecurrenceFrequency",

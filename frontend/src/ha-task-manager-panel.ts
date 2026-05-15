@@ -7,9 +7,14 @@ import {
   fetchAnalytics,
   fetchCurrentProfile,
   fetchDueInstances,
+  fetchHaUsers,
   fetchPendingConfirmations,
+  fetchProfileMappings,
   fetchProfiles,
   fetchTasks,
+  fetchUnmappedNfcTags,
+  importHaUser,
+  linkNfcTag,
   saveTask,
 } from "./api/client";
 import "./components/completion-dialog";
@@ -17,23 +22,32 @@ import "./components/nfc-confirm-dialog";
 import "./views/analytics-view";
 import "./views/household-board-view";
 import "./views/my-tasks-view";
+import "./views/setup-view";
 import "./views/task-builder-view";
+import type {
+  ImportHaUserRequestDetail,
+  LinkNfcTagRequestDetail,
+} from "./views/setup-view";
 
 import type {
   CompletionAttempt,
   CurrentUserProfile,
+  HaUserSummary,
   HouseholdProfile,
+  NfcDiscoveryEntry,
   ProfileAnalyticsSnapshot,
   TaskDefinition,
   TaskDueInstance,
+  UserProfileMapping,
 } from "./types/task";
 
-type PanelView = "my-tasks" | "household" | "analytics" | "admin";
+type PanelView = "my-tasks" | "household" | "analytics" | "admin" | "setup";
 
 interface HomeAssistantLike {
   callWS: <T>(message: Record<string, unknown>) => Promise<T>;
   user?: {
     id?: string;
+    is_admin?: boolean;
   };
 }
 
@@ -42,6 +56,8 @@ interface NavigationTab {
   label: string;
   description: string;
 }
+
+const SETUP_DISCOVERY_WATCH_INTERVAL_MS = 1500;
 
 const NAVIGATION_TABS: NavigationTab[] = [
   {
@@ -63,6 +79,11 @@ const NAVIGATION_TABS: NavigationTab[] = [
     id: "admin",
     label: "Manage Tasks",
     description: "Create and update recurring household tasks."
+  },
+  {
+    id: "setup",
+    label: "Setup",
+    description: "Import Home Assistant users and link discovered NFC tags."
   }
 ];
 
@@ -96,6 +117,16 @@ function errorMessage(error: unknown): string {
   return String(error);
 }
 
+function upsertTask(tasks: TaskDefinition[], savedTask: TaskDefinition, requestedTaskId: string): TaskDefinition[] {
+  const retainedTasks = tasks.filter(
+    (task) => task.id !== savedTask.id && task.id !== requestedTaskId
+  );
+
+  return [...retainedTasks, savedTask];
+}
+
+type PanelErrorSource = "setup-load" | null;
+
 @customElement("ha-task-manager-panel")
 export class HaTaskManagerPanel extends LitElement {
   @property({ attribute: false }) public hass!: HomeAssistantLike;
@@ -120,6 +151,12 @@ export class HaTaskManagerPanel extends LitElement {
 
   @state() private analyticsSnapshots: Record<string, ProfileAnalyticsSnapshot> = {};
 
+  @state() private profileMappings: UserProfileMapping[] = [];
+
+  @state() private haUsers: HaUserSummary[] = [];
+
+  @state() private unmappedTags: NfcDiscoveryEntry[] = [];
+
   @state() private manualCompletionDialog: ManualCompletionDialogState | null = null;
 
   @state() private manualCompletionBusy = false;
@@ -134,17 +171,45 @@ export class HaTaskManagerPanel extends LitElement {
 
   @state() private taskBuilderSaving = false;
 
+  @state() private setupBusy = false;
+
+  @state() private setupLoading = false;
+
+  @state() private setupWatchActive = false;
+
   @state() private taskBuilderStatusMessage = "";
 
   @state() private taskBuilderErrorMessage = "";
 
+  @state() private taskBuilderHandoffTaskId = "";
+
   private pendingPollHandle: number | null = null;
+
+  private setupWatchPollHandle: number | null = null;
 
   private hasLoadedInitialData = false;
 
-  private lastLoadedUserId = "";
+  private lastLoadedUserContextKey = "";
+
+  private coreLoadRequestId = 0;
+
+  private setupLoadRequestId = 0;
+
+  private setupWatchRefreshRequestId = 0;
+
+  private setupMutationRequestId = 0;
+
+  private taskSaveRequestId = 0;
+
+  private setupWatchSessionId = 0;
 
   private snoozedPendingAttemptIds = new Set<string>();
+
+  private panelErrorSource: PanelErrorSource = null;
+
+  private hasLoadedSetupData = false;
+
+  private setupWatchBaselineTagIds = new Set<string>();
 
   static styles = css`
     :host {
@@ -320,21 +385,42 @@ export class HaTaskManagerPanel extends LitElement {
 
   protected updated(changedProperties: Map<string, unknown>): void {
     if (changedProperties.has("hass") && this.hass) {
-      const currentUserId = this.hass.user?.id ?? "";
-      if (!this.hasLoadedInitialData || this.lastLoadedUserId !== currentUserId) {
+      this.stopSetupWatch();
+      const currentUserContextKey = this.currentUserContextKey;
+      if (!this.hasLoadedInitialData || this.lastLoadedUserContextKey !== currentUserContextKey) {
+        this.invalidateAdminMutations();
         this.hasLoadedInitialData = true;
-        this.lastLoadedUserId = currentUserId;
+        this.lastLoadedUserContextKey = currentUserContextKey;
+        this.hasLoadedSetupData = false;
+        this.setupLoading = this.activeView === "setup" || this.activeView === "admin";
+        this.profileMappings = [];
+        this.haUsers = [];
+        this.unmappedTags = [];
         void this.loadCoreData();
+        if (this.activeView === "setup" || this.activeView === "admin") {
+          void this.loadSetupData();
+        }
         this.startPendingPolling();
       }
     }
 
-    if (changedProperties.has("currentView") && this.currentView === "analytics") {
-      void this.loadAnalytics();
+    if (changedProperties.has("currentView")) {
+      if (this.activeView !== "setup") {
+        this.stopSetupWatch();
+      }
+
+      if (this.activeView === "analytics") {
+        void this.loadAnalytics();
+      }
+
+      if ((this.activeView === "setup" || this.activeView === "admin") && !this.hasLoadedSetupData) {
+        void this.loadSetupData();
+      }
     }
   }
 
   public disconnectedCallback(): void {
+    this.stopSetupWatch();
     if (this.pendingPollHandle !== null) {
       window.clearInterval(this.pendingPollHandle);
       this.pendingPollHandle = null;
@@ -343,7 +429,9 @@ export class HaTaskManagerPanel extends LitElement {
   }
 
   protected render() {
-    const activeTab = NAVIGATION_TABS.find((tab) => tab.id === this.currentView);
+    const activeView = this.activeView;
+    const navigationTabs = this.navigationTabs;
+    const activeTab = navigationTabs.find((tab) => tab.id === activeView);
     const today = todayIso();
     const currentProfileId = this.currentProfile?.profile_id;
     const myTaskIds = new Set(
@@ -380,14 +468,12 @@ export class HaTaskManagerPanel extends LitElement {
           </div>
         </header>
         <nav aria-label="Task Manager sections">
-          ${NAVIGATION_TABS.map(
+          ${navigationTabs.map(
             (tab) => html`
               <button
                 type="button"
-                aria-selected=${tab.id === this.currentView ? "true" : "false"}
-                @click=${() => {
-                  this.currentView = tab.id;
-                }}
+                aria-selected=${tab.id === activeView ? "true" : "false"}
+                @click=${() => this.selectView(tab.id)}
               >
                 ${tab.label}
               </button>
@@ -399,7 +485,7 @@ export class HaTaskManagerPanel extends LitElement {
           <h2>${activeTab?.label ?? "Task Manager"}</h2>
           <p class="subtitle">${activeTab?.description ?? ""}</p>
           <div class="view-shell">
-            ${this.renderCurrentView()}
+            ${this.renderCurrentView(activeView)}
           </div>
         </section>
         <task-manager-completion-dialog
@@ -425,12 +511,12 @@ export class HaTaskManagerPanel extends LitElement {
     `;
   }
 
-  private renderCurrentView() {
+  private renderCurrentView(view: PanelView) {
     if (this.coreLoading && this.tasks.length === 0) {
       return html`<div>Loading panel data...</div>`;
     }
 
-    switch (this.currentView) {
+    switch (view) {
       case "my-tasks":
         return html`
           <task-manager-my-tasks-view
@@ -467,11 +553,34 @@ export class HaTaskManagerPanel extends LitElement {
           <task-manager-task-builder-view
             .tasks=${this.tasks}
             .profiles=${this.profiles}
+            .profileMappings=${this.profileMappings}
+            .haUsers=${this.haUsers}
+            .unmappedTags=${this.unmappedTags}
+            .draftContextKey=${this.currentUserContextKey}
+            .handoffTaskId=${this.taskBuilderHandoffTaskId}
             .saving=${this.taskBuilderSaving}
             .statusMessage=${this.taskBuilderStatusMessage}
             .errorMessage=${this.taskBuilderErrorMessage}
             @save-task-request=${this.handleSaveTask}
           ></task-manager-task-builder-view>
+        `;
+      case "setup":
+        return html`
+          <task-manager-setup-view
+            .haUsers=${this.haUsers}
+            .profiles=${this.profiles}
+            .mappings=${this.profileMappings}
+            .unmappedTags=${this.unmappedTags}
+            .tasks=${this.tasks}
+            .watchingForScan=${this.setupWatchActive}
+            .errorMessage=${this.panelErrorSource === "setup-load" ? this.panelError : ""}
+            .busy=${this.setupBusy}
+            .loading=${this.setupLoading && !this.hasLoadedSetupData}
+            @import-ha-user-request=${this.handleImportHaUser}
+            @link-nfc-tag-request=${this.handleLinkNfcTag}
+            @start-nfc-watch-request=${this.handleStartSetupWatch}
+            @stop-nfc-watch-request=${this.handleStopSetupWatch}
+          ></task-manager-setup-view>
         `;
       default:
         return nothing;
@@ -500,24 +609,185 @@ export class HaTaskManagerPanel extends LitElement {
     }, 10000);
   }
 
-  private async loadCoreData(): Promise<void> {
+  private startSetupWatchPolling(): void {
+    if (this.setupWatchPollHandle !== null) {
+      window.clearInterval(this.setupWatchPollHandle);
+    }
+
+    this.setupWatchPollHandle = window.setInterval(() => {
+      void this.pollSetupDiscoveries();
+    }, SETUP_DISCOVERY_WATCH_INTERVAL_MS);
+  }
+
+  private stopSetupWatch(): void {
+    this.setupWatchSessionId += 1;
+    this.setupWatchActive = false;
+    if (this.setupWatchPollHandle !== null) {
+      window.clearInterval(this.setupWatchPollHandle);
+      this.setupWatchPollHandle = null;
+    }
+  }
+
+  private clearPanelError(): void {
+    this.panelError = "";
+    this.panelErrorSource = null;
+  }
+
+  private setPanelError(message: string, source: PanelErrorSource = null): void {
+    this.panelError = message;
+    this.panelErrorSource = source;
+  }
+
+  private clearSetupLoadError(): void {
+    if (this.panelErrorSource === "setup-load") {
+      this.clearPanelError();
+    }
+  }
+
+  private invalidateAdminMutations(): void {
+    this.setupMutationRequestId += 1;
+    this.taskSaveRequestId += 1;
+    this.setupBusy = false;
+    this.taskBuilderSaving = false;
+    this.taskBuilderStatusMessage = "";
+    this.taskBuilderErrorMessage = "";
+    this.taskBuilderHandoffTaskId = "";
+  }
+
+  private beginCoreLoad(): {
+    hass: HomeAssistantLike;
+    requestId: number;
+    userContextKey: string;
+  } | null {
     if (!this.hass) {
+      return null;
+    }
+
+    return {
+      hass: this.hass,
+      requestId: ++this.coreLoadRequestId,
+      userContextKey: this.currentUserContextKey,
+    };
+  }
+
+  private beginSetupLoad(): {
+    hass: HomeAssistantLike;
+    requestId: number;
+    userContextKey: string;
+  } | null {
+    if (!this.hass || !this.canAccessAdminViews) {
+      return null;
+    }
+
+    return {
+      hass: this.hass,
+      requestId: ++this.setupLoadRequestId,
+      userContextKey: this.currentUserContextKey,
+    };
+  }
+
+  private beginSetupWatchRefresh(): {
+    hass: HomeAssistantLike;
+    requestId: number;
+    userContextKey: string;
+    watchSessionId: number;
+  } | null {
+    if (!this.hass || !this.canAccessAdminViews || !this.setupWatchActive) {
+      return null;
+    }
+
+    return {
+      hass: this.hass,
+      requestId: ++this.setupWatchRefreshRequestId,
+      userContextKey: this.currentUserContextKey,
+      watchSessionId: this.setupWatchSessionId,
+    };
+  }
+
+  private beginSetupMutation(): {
+    hass: HomeAssistantLike;
+    requestId: number;
+    userContextKey: string;
+  } | null {
+    if (!this.hass || !this.canAccessAdminViews) {
+      return null;
+    }
+
+    return {
+      hass: this.hass,
+      requestId: ++this.setupMutationRequestId,
+      userContextKey: this.currentUserContextKey,
+    };
+  }
+
+  private beginTaskSave(): {
+    hass: HomeAssistantLike;
+    requestId: number;
+    userContextKey: string;
+  } | null {
+    if (!this.hass || !this.canAccessAdminViews) {
+      return null;
+    }
+
+    return {
+      hass: this.hass,
+      requestId: ++this.taskSaveRequestId,
+      userContextKey: this.currentUserContextKey,
+    };
+  }
+
+  private isCurrentCoreLoad(requestId: number, userContextKey: string): boolean {
+    return requestId === this.coreLoadRequestId && userContextKey === this.currentUserContextKey;
+  }
+
+  private isCurrentSetupLoad(requestId: number, userContextKey: string): boolean {
+    return requestId === this.setupLoadRequestId && userContextKey === this.currentUserContextKey;
+  }
+
+  private isCurrentSetupMutation(requestId: number, userContextKey: string): boolean {
+    return requestId === this.setupMutationRequestId && userContextKey === this.currentUserContextKey;
+  }
+
+  private isCurrentTaskSave(requestId: number, userContextKey: string): boolean {
+    return requestId === this.taskSaveRequestId && userContextKey === this.currentUserContextKey;
+  }
+
+  private isCurrentSetupWatchRefresh(
+    requestId: number,
+    userContextKey: string,
+    watchSessionId: number
+  ): boolean {
+    return (
+      this.setupWatchActive &&
+      requestId === this.setupWatchRefreshRequestId &&
+      userContextKey === this.currentUserContextKey &&
+      watchSessionId === this.setupWatchSessionId
+    );
+  }
+
+  private async loadCoreData(): Promise<void> {
+    const loadRequest = this.beginCoreLoad();
+    if (!loadRequest) {
       return;
     }
 
     this.coreLoading = true;
-    this.panelError = "";
+    this.clearPanelError();
 
     try {
       const today = todayIso();
       const fromDate = shiftIsoDate(today, -14);
       const [currentProfile, profiles, tasks, dueInstances, pendingConfirmations] = await Promise.all([
-        fetchCurrentProfile(this.hass),
-        fetchProfiles(this.hass),
-        fetchTasks(this.hass),
-        fetchDueInstances(this.hass, { fromDate, horizonDays: 35 }),
-        fetchPendingConfirmations(this.hass),
+        fetchCurrentProfile(loadRequest.hass),
+        fetchProfiles(loadRequest.hass),
+        fetchTasks(loadRequest.hass),
+        fetchDueInstances(loadRequest.hass, { fromDate, horizonDays: 35 }),
+        fetchPendingConfirmations(loadRequest.hass),
       ]);
+
+      if (!this.isCurrentCoreLoad(loadRequest.requestId, loadRequest.userContextKey)) {
+        return;
+      }
 
       this.currentProfile = currentProfile;
       this.profiles = profiles;
@@ -527,13 +797,103 @@ export class HaTaskManagerPanel extends LitElement {
       this.pruneSnoozedAttempts();
       this.ensurePendingDialog();
     } catch (error) {
-      this.panelError = errorMessage(error);
+      if (this.isCurrentCoreLoad(loadRequest.requestId, loadRequest.userContextKey)) {
+        this.setPanelError(errorMessage(error));
+      }
     } finally {
-      this.coreLoading = false;
+      if (this.isCurrentCoreLoad(loadRequest.requestId, loadRequest.userContextKey)) {
+        this.coreLoading = false;
+      }
     }
 
-    if (this.currentView === "analytics") {
+    if (
+      this.isCurrentCoreLoad(loadRequest.requestId, loadRequest.userContextKey) &&
+      this.currentView === "analytics"
+    ) {
       await this.loadAnalytics();
+    }
+  }
+
+  private async loadSetupData(): Promise<void> {
+    const loadRequest = this.beginSetupLoad();
+    if (!loadRequest) {
+      return;
+    }
+
+    this.setupLoading = true;
+
+    try {
+      const [profileMappings, haUsers, unmappedTags] = await Promise.all([
+        fetchProfileMappings(loadRequest.hass),
+        fetchHaUsers(loadRequest.hass),
+        fetchUnmappedNfcTags(loadRequest.hass),
+      ]);
+
+      if (!this.isCurrentSetupLoad(loadRequest.requestId, loadRequest.userContextKey)) {
+        return;
+      }
+
+      this.profileMappings = profileMappings;
+      this.haUsers = haUsers;
+      this.unmappedTags = unmappedTags;
+      this.hasLoadedSetupData = true;
+      this.clearSetupLoadError();
+    } catch (error) {
+      if (this.isCurrentSetupLoad(loadRequest.requestId, loadRequest.userContextKey)) {
+        this.profileMappings = [];
+        this.haUsers = [];
+        this.unmappedTags = [];
+        this.hasLoadedSetupData = false;
+        this.setPanelError(errorMessage(error), "setup-load");
+      }
+    } finally {
+      if (this.isCurrentSetupLoad(loadRequest.requestId, loadRequest.userContextKey)) {
+        this.setupLoading = false;
+      }
+    }
+  }
+
+  private async pollSetupDiscoveries(): Promise<void> {
+    const refreshRequest = this.beginSetupWatchRefresh();
+    if (!refreshRequest) {
+      return;
+    }
+
+    try {
+      const unmappedTags = await fetchUnmappedNfcTags(refreshRequest.hass);
+
+      if (
+        !this.isCurrentSetupWatchRefresh(
+          refreshRequest.requestId,
+          refreshRequest.userContextKey,
+          refreshRequest.watchSessionId
+        )
+      ) {
+        return;
+      }
+
+      this.unmappedTags = unmappedTags;
+
+      const discoveredNewTag = unmappedTags.some(
+        (tag) => !this.setupWatchBaselineTagIds.has(tag.tag_id)
+      );
+
+      if (discoveredNewTag) {
+        this.stopSetupWatch();
+      }
+    } catch (error) {
+      if (
+        !this.isCurrentSetupWatchRefresh(
+          refreshRequest.requestId,
+          refreshRequest.userContextKey,
+          refreshRequest.watchSessionId
+        )
+      ) {
+        return;
+      }
+
+      this.stopSetupWatch();
+      this.setPanelError(errorMessage(error));
     }
   }
 
@@ -557,7 +917,7 @@ export class HaTaskManagerPanel extends LitElement {
       );
       this.analyticsSnapshots = Object.fromEntries(snapshots);
     } catch (error) {
-      this.panelError = errorMessage(error);
+      this.setPanelError(errorMessage(error));
     } finally {
       this.analyticsLoading = false;
     }
@@ -576,7 +936,7 @@ export class HaTaskManagerPanel extends LitElement {
       }
       this.ensurePendingDialog();
     } catch (error) {
-      this.panelError = errorMessage(error);
+      this.setPanelError(errorMessage(error));
     }
   }
 
@@ -690,8 +1050,87 @@ export class HaTaskManagerPanel extends LitElement {
     await this.loadAnalytics();
   };
 
+  private handleStartSetupWatch = (): void => {
+    if (!this.hass || !this.canAccessAdminViews || this.setupLoading || this.setupWatchActive) {
+      return;
+    }
+
+    this.setupWatchBaselineTagIds = new Set(this.unmappedTags.map((tag) => tag.tag_id));
+    this.setupWatchSessionId += 1;
+    this.setupWatchActive = true;
+    void this.pollSetupDiscoveries();
+    this.startSetupWatchPolling();
+  };
+
+  private handleStopSetupWatch = (): void => {
+    this.stopSetupWatch();
+  };
+
+  private handleImportHaUser = async (
+    event: CustomEvent<ImportHaUserRequestDetail>
+  ): Promise<void> => {
+    const mutationRequest = this.beginSetupMutation();
+    if (!mutationRequest) {
+      return;
+    }
+
+    this.setupBusy = true;
+    this.clearPanelError();
+
+    try {
+      await importHaUser(mutationRequest.hass, { haUserId: event.detail.haUserId });
+
+      if (!this.isCurrentSetupMutation(mutationRequest.requestId, mutationRequest.userContextKey)) {
+        return;
+      }
+
+      await this.loadCoreData();
+      await this.loadSetupData();
+    } catch (error) {
+      if (this.isCurrentSetupMutation(mutationRequest.requestId, mutationRequest.userContextKey)) {
+        this.setPanelError(errorMessage(error));
+      }
+    } finally {
+      if (this.isCurrentSetupMutation(mutationRequest.requestId, mutationRequest.userContextKey)) {
+        this.setupBusy = false;
+      }
+    }
+  };
+
+  private handleLinkNfcTag = async (
+    event: CustomEvent<LinkNfcTagRequestDetail>
+  ): Promise<void> => {
+    const mutationRequest = this.beginSetupMutation();
+    if (!mutationRequest) {
+      return;
+    }
+
+    this.setupBusy = true;
+    this.clearPanelError();
+
+    try {
+      await linkNfcTag(mutationRequest.hass, event.detail);
+
+      if (!this.isCurrentSetupMutation(mutationRequest.requestId, mutationRequest.userContextKey)) {
+        return;
+      }
+
+      await this.loadCoreData();
+      await this.loadSetupData();
+    } catch (error) {
+      if (this.isCurrentSetupMutation(mutationRequest.requestId, mutationRequest.userContextKey)) {
+        this.setPanelError(errorMessage(error));
+      }
+    } finally {
+      if (this.isCurrentSetupMutation(mutationRequest.requestId, mutationRequest.userContextKey)) {
+        this.setupBusy = false;
+      }
+    }
+  };
+
   private handleSaveTask = async (event: Event): Promise<void> => {
-    if (!this.hass) {
+    const mutationRequest = this.beginTaskSave();
+    if (!mutationRequest) {
       return;
     }
 
@@ -701,18 +1140,77 @@ export class HaTaskManagerPanel extends LitElement {
     this.taskBuilderErrorMessage = "";
 
     try {
-      const savedTask = await saveTask(this.hass, detail.task);
+      const savedTask = await saveTask(mutationRequest.hass, detail.task);
+
+      if (!this.isCurrentTaskSave(mutationRequest.requestId, mutationRequest.userContextKey)) {
+        return;
+      }
+
+      this.tasks = upsertTask(this.tasks, savedTask, detail.task.id);
+      this.taskBuilderHandoffTaskId = savedTask.id;
       this.taskBuilderStatusMessage = `Saved ${savedTask.title}.`;
-      await this.loadCoreData();
-      if (this.currentView === "analytics") {
+      await Promise.all([
+        this.loadCoreData(),
+        this.loadSetupData(),
+      ]);
+      if (
+        this.isCurrentTaskSave(mutationRequest.requestId, mutationRequest.userContextKey) &&
+        this.currentView === "analytics"
+      ) {
         await this.loadAnalytics();
       }
     } catch (error) {
-      this.taskBuilderErrorMessage = errorMessage(error);
+      if (this.isCurrentTaskSave(mutationRequest.requestId, mutationRequest.userContextKey)) {
+        this.taskBuilderErrorMessage = errorMessage(error);
+      }
     } finally {
-      this.taskBuilderSaving = false;
+      if (this.isCurrentTaskSave(mutationRequest.requestId, mutationRequest.userContextKey)) {
+        this.taskBuilderSaving = false;
+      }
     }
   };
+
+  private get canAccessAdminViews(): boolean {
+    return this.hass?.user?.is_admin === true;
+  }
+
+  private get currentUserContextKey(): string {
+    const userId = this.hass?.user?.id ?? "";
+    const accessLevel = this.canAccessAdminViews ? "admin" : "user";
+    return `${userId}:${accessLevel}`;
+  }
+
+  private get activeView(): PanelView {
+    if ((this.currentView === "setup" || this.currentView === "admin") && !this.canAccessAdminViews) {
+      return "my-tasks";
+    }
+
+    return this.currentView;
+  }
+
+  private get navigationTabs(): NavigationTab[] {
+    return NAVIGATION_TABS.filter(
+      (tab) => (tab.id !== "setup" && tab.id !== "admin") || this.canAccessAdminViews
+    );
+  }
+
+  private selectView(view: PanelView): void {
+    if (view === "setup" || view === "admin") {
+      if (!this.canAccessAdminViews) {
+        return;
+      }
+
+      if (view === "setup" && !this.hasLoadedSetupData) {
+        this.setupLoading = true;
+      }
+    }
+
+    if (view !== "setup") {
+      this.stopSetupWatch();
+    }
+
+    this.currentView = view;
+  }
 }
 
 declare global {

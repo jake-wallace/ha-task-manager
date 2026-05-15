@@ -1,4 +1,4 @@
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 
 import pytest
 
@@ -7,6 +7,7 @@ from custom_components.ha_task_manager.exceptions import (
     UnmappedUserError,
 )
 from custom_components.ha_task_manager.models import (
+    HaUserSummary,
     HouseholdProfile,
     UserProfileMapping,
 )
@@ -20,7 +21,7 @@ def existing_profile_fixture() -> HouseholdProfile:
     return HouseholdProfile(
         id="profile-alex",
         display_name="Alex",
-        created_at=datetime(2026, 5, 13, tzinfo=UTC),
+        created_at=datetime(2026, 5, 13, tzinfo=timezone.utc),
     )
 
 
@@ -35,7 +36,7 @@ def mapping_service_fixture(
                 id="mapping-1",
                 ha_user_id="ha-user-1",
                 profile_id=existing_profile.id,
-                created_at=datetime(2026, 5, 13, tzinfo=UTC),
+                created_at=datetime(2026, 5, 13, tzinfo=timezone.utc),
             )
         ],
     )
@@ -70,13 +71,13 @@ def test_add_profile_and_mapping_supports_later_resolution() -> None:
     profile = HouseholdProfile(
         id="profile-sam",
         display_name="Sam",
-        created_at=datetime(2026, 5, 13, tzinfo=UTC),
+        created_at=datetime(2026, 5, 13, tzinfo=timezone.utc),
     )
     mapping = UserProfileMapping(
         id="mapping-2",
         ha_user_id="ha-user-2",
         profile_id=profile.id,
-        created_at=datetime(2026, 5, 13, tzinfo=UTC),
+        created_at=datetime(2026, 5, 13, tzinfo=timezone.utc),
     )
 
     service.add_profile(profile)
@@ -101,8 +102,76 @@ def test_add_mapping_for_nonexistent_profile_is_rejected() -> None:
         id="mapping-3",
         ha_user_id="ha-user-3",
         profile_id="missing-profile",
-        created_at=datetime(2026, 5, 13, tzinfo=UTC),
+        created_at=datetime(2026, 5, 13, tzinfo=timezone.utc),
     )
 
     with pytest.raises(InvalidUserProfileMappingError):
         service.add_mapping(mapping)
+
+
+def test_list_unmapped_ha_users_excludes_mapped_inactive_and_system_users(
+    mapping_service: IdentityMappingService,
+) -> None:
+    users = [
+        HaUserSummary(
+            id="ha-user-1",
+            name="Alex",
+            is_active=True,
+            is_admin=True,
+            system_generated=False,
+        ),
+        HaUserSummary(
+            id="ha-user-2",
+            name="Sam",
+            is_active=True,
+            is_admin=False,
+            system_generated=False,
+        ),
+        HaUserSummary(
+            id="ha-user-3",
+            name="Inactive",
+            is_active=False,
+            is_admin=False,
+            system_generated=False,
+        ),
+        HaUserSummary(
+            id="ha-user-4",
+            name="System",
+            is_active=True,
+            is_admin=False,
+            system_generated=True,
+        ),
+    ]
+
+    result = mapping_service.list_unmapped_ha_users(users)
+
+    assert [user.id for user in result] == ["ha-user-2"]
+
+
+def test_ensure_profile_for_ha_user_is_idempotent() -> None:
+    service = IdentityMappingService()
+    ha_user = HaUserSummary(
+        id="ha-user-4",
+        name="Jordan",
+        is_active=True,
+        is_admin=False,
+        system_generated=False,
+    )
+
+    profile, mapping, created = service.ensure_profile_for_ha_user(ha_user)
+    second_profile, second_mapping, second_created = service.ensure_profile_for_ha_user(
+        ha_user
+    )
+
+    mappings = service.list_mappings()
+    profiles = service.list_profiles()
+
+    assert created is True
+    assert second_created is False
+    assert profile.display_name == "Jordan"
+    assert second_profile.id == profile.id
+    assert second_mapping.id == mapping.id
+    assert mapping.ha_user_id == "ha-user-4"
+    assert mapping.profile_id == profile.id
+    assert [stored_mapping.ha_user_id for stored_mapping in mappings] == ["ha-user-4"]
+    assert [stored_profile.id for stored_profile in profiles] == [profile.id]

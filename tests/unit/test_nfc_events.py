@@ -5,6 +5,7 @@ import pytest
 from custom_components.ha_task_manager.exceptions import UnknownNfcTagError
 from custom_components.ha_task_manager.models import (
     CompletionSource,
+    NfcDiscoveryEntry,
     NfcTagMapping,
     RecurrenceFrequency,
     RecurrenceRule,
@@ -150,3 +151,143 @@ def test_dismiss_confirmation_removes_pending_attempt(service: NfcEventService) 
     service.dismiss_confirmation(attempt.id)
 
     assert service.get_pending_confirmations() == []
+
+
+def test_record_tag_discovery_tracks_first_and_last_seen() -> None:
+    service = NfcEventService()
+    first_seen = datetime(2026, 5, 14, 8, 0, tzinfo=UTC)
+    last_seen = datetime(2026, 5, 14, 9, 30, tzinfo=UTC)
+
+    service.record_tag_discovery(
+        "tag-new",
+        source="nfc_phone",
+        seen_at=first_seen,
+    )
+    service.record_tag_discovery(
+        "tag-new",
+        source="nfc_reader",
+        seen_at=last_seen,
+    )
+
+    assert service.list_unmapped_discoveries() == [
+        NfcDiscoveryEntry(
+            tag_id="tag-new",
+            first_seen=first_seen,
+            last_seen=last_seen,
+            last_source="nfc_reader",
+        )
+    ]
+
+
+def test_list_unmapped_discoveries_excludes_mapped_tags(
+    task: TaskDefinition,
+    tag_mapping: NfcTagMapping,
+) -> None:
+    service = NfcEventService(
+        tag_mappings=[tag_mapping],
+        tasks=[task],
+    )
+
+    service.record_tag_discovery(
+        "tag-abc123",
+        source="nfc_phone",
+        seen_at=datetime(2026, 5, 14, 8, 0, tzinfo=UTC),
+    )
+    service.record_tag_discovery(
+        "tag-unmapped",
+        source="nfc_reader",
+        seen_at=datetime(2026, 5, 14, 9, 0, tzinfo=UTC),
+    )
+
+    assert [entry.tag_id for entry in service.list_unmapped_discoveries()] == [
+        "tag-unmapped"
+    ]
+
+
+def test_record_tag_discovery_does_not_persist_already_mapped_tags(
+    task: TaskDefinition,
+    tag_mapping: NfcTagMapping,
+) -> None:
+    service = NfcEventService(
+        tag_mappings=[tag_mapping],
+        tasks=[task],
+    )
+
+    service.record_tag_discovery(
+        "tag-abc123",
+        source="nfc_phone",
+        seen_at=datetime(2026, 5, 14, 8, 0, tzinfo=UTC),
+    )
+
+    assert service.list_unmapped_discoveries() == []
+    assert service.get_discoveries() == []
+
+
+def test_register_tag_mapping_retires_matching_discovery_entry(
+    tag_mapping: NfcTagMapping,
+) -> None:
+    mapped_discovery = NfcDiscoveryEntry(
+        tag_id="tag-abc123",
+        first_seen=datetime(2026, 5, 14, 8, 0, tzinfo=UTC),
+        last_seen=datetime(2026, 5, 14, 8, 15, tzinfo=UTC),
+        last_source="nfc_phone",
+    )
+    unmapped_discovery = NfcDiscoveryEntry(
+        tag_id="tag-unmapped",
+        first_seen=datetime(2026, 5, 14, 9, 0, tzinfo=UTC),
+        last_seen=datetime(2026, 5, 14, 9, 30, tzinfo=UTC),
+        last_source="nfc_reader",
+    )
+    service = NfcEventService(
+        discovery_entries=[mapped_discovery, unmapped_discovery],
+    )
+
+    service.register_tag_mapping(tag_mapping)
+
+    assert [entry.tag_id for entry in service.list_unmapped_discoveries()] == [
+        "tag-unmapped"
+    ]
+    assert [entry.tag_id for entry in service.get_discoveries()] == [
+        "tag-unmapped"
+    ]
+
+
+def test_constructor_retires_persisted_mapped_discovery_entries(
+    task: TaskDefinition,
+    tag_mapping: NfcTagMapping,
+) -> None:
+    service = NfcEventService(
+        tag_mappings=[tag_mapping],
+        discovery_entries=[
+            NfcDiscoveryEntry(
+                tag_id="tag-abc123",
+                first_seen=datetime(2026, 5, 14, 8, 0, tzinfo=UTC),
+                last_seen=datetime(2026, 5, 14, 8, 15, tzinfo=UTC),
+                last_source="nfc_phone",
+            ),
+            NfcDiscoveryEntry(
+                tag_id="tag-unmapped",
+                first_seen=datetime(2026, 5, 14, 9, 0, tzinfo=UTC),
+                last_seen=datetime(2026, 5, 14, 9, 30, tzinfo=UTC),
+                last_source="nfc_reader",
+            ),
+        ],
+        tasks=[task],
+    )
+
+    assert [entry.tag_id for entry in service.get_discoveries()] == [
+        "tag-unmapped"
+    ]
+
+
+def test_constructor_accepts_persisted_discovery_entries() -> None:
+    discovery = NfcDiscoveryEntry(
+        tag_id="tag-persisted",
+        first_seen=datetime(2026, 5, 13, 10, 0, tzinfo=UTC),
+        last_seen=datetime(2026, 5, 13, 11, 0, tzinfo=UTC),
+        last_source="nfc_reader",
+    )
+
+    service = NfcEventService(discovery_entries=[discovery])
+
+    assert service.get_discoveries() == [discovery]

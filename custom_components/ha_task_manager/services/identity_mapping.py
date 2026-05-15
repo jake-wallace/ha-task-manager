@@ -10,6 +10,7 @@ from custom_components.ha_task_manager.exceptions import (
     UnmappedUserError,
 )
 from custom_components.ha_task_manager.models import (
+    HaUserSummary,
     HouseholdProfile,
     UserProfileMapping,
 )
@@ -54,6 +55,41 @@ class IdentityMappingService:
     def list_profiles(self) -> list[HouseholdProfile]:
         """Return all known household profiles."""
         return [deepcopy(profile) for profile in self._profiles_by_id.values()]
+
+    def list_mappings(self) -> list[UserProfileMapping]:
+        """Return all known HA user to household profile mappings."""
+        return [deepcopy(mapping) for mapping in self._mappings_by_ha_user_id.values()]
+
+    def list_unmapped_ha_users(
+        self,
+        ha_users: Iterable[HaUserSummary],
+    ) -> list[HaUserSummary]:
+        """Return active, non-system HA users without a household profile link."""
+        return [
+            deepcopy(ha_user)
+            for ha_user in ha_users
+            if ha_user.is_active
+            and not ha_user.system_generated
+            and not self.is_mapped(ha_user.id)
+        ]
+
+    def ensure_profile_for_ha_user(
+        self,
+        ha_user: HaUserSummary,
+    ) -> tuple[HouseholdProfile, UserProfileMapping, bool]:
+        """Create or return the profile and mapping for a HA user."""
+        existing_mapping = self._mappings_by_ha_user_id.get(ha_user.id)
+        if existing_mapping is not None:
+            return self.resolve_profile(ha_user.id), deepcopy(existing_mapping), False
+
+        display_name = ha_user.name.strip() or ha_user.id
+        profile = HouseholdProfile(display_name=display_name)
+        mapping = UserProfileMapping(ha_user_id=ha_user.id, profile_id=profile.id)
+
+        self.add_profile(profile)
+        self.add_mapping(mapping)
+
+        return deepcopy(profile), deepcopy(mapping), True
 
     def add_profile(self, profile: HouseholdProfile) -> None:
         """Add or replace a household profile."""

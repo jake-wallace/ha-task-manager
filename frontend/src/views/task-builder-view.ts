@@ -2,10 +2,13 @@ import { LitElement, css, html } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 
 import type {
+  HaUserSummary,
   HouseholdProfile,
+  NfcDiscoveryEntry,
   RecurrenceFrequency,
   SkipWindow,
   TaskDefinition,
+  UserProfileMapping,
 } from "../types/task";
 
 const NEW_TASK_ID = "__new__";
@@ -78,6 +81,16 @@ export class TaskBuilderView extends LitElement {
 
   @property({ attribute: false }) public profiles: HouseholdProfile[] = [];
 
+  @property({ attribute: false }) public profileMappings: UserProfileMapping[] = [];
+
+  @property({ attribute: false }) public haUsers: HaUserSummary[] = [];
+
+  @property({ attribute: false }) public unmappedTags: NfcDiscoveryEntry[] = [];
+
+  @property({ attribute: false }) public handoffTaskId = "";
+
+  @property() public draftContextKey = "";
+
   @property({ type: Boolean }) public saving = false;
 
   @property() public statusMessage = "";
@@ -89,6 +102,8 @@ export class TaskBuilderView extends LitElement {
   @state() private formState: TaskFormState = emptyFormState([]);
 
   @state() private localError = "";
+
+  private lastAppliedHandoffTaskId = "";
 
   static styles = css`
     :host {
@@ -306,11 +321,56 @@ export class TaskBuilderView extends LitElement {
   `;
 
   protected willUpdate(changedProperties: Map<PropertyKey, unknown>): void {
+    if (changedProperties.has("draftContextKey") && this.selectedTaskId === NEW_TASK_ID) {
+      this.localError = "";
+      this.formState = emptyFormState(this.profiles);
+    }
+
+    if (
+      (changedProperties.has("handoffTaskId") || changedProperties.has("tasks")) &&
+      this.handoffTaskId &&
+      this.handoffTaskId !== this.lastAppliedHandoffTaskId
+    ) {
+      const handoffTask = this.tasks.find((task) => task.id === this.handoffTaskId);
+      if (handoffTask) {
+        this.selectedTaskId = handoffTask.id;
+        this.localError = "";
+        this.formState = formStateFromTask(handoffTask);
+        this.lastAppliedHandoffTaskId = handoffTask.id;
+      }
+    }
+
     if (changedProperties.has("profiles") && !this.formState.assignedProfileId) {
       this.formState = {
         ...this.formState,
         assignedProfileId: this.profiles[0]?.id ?? "",
       };
+    }
+
+    if (
+      this.selectedTaskId === NEW_TASK_ID &&
+      (changedProperties.has("profiles") || changedProperties.has("unmappedTags"))
+    ) {
+      const profileIds = new Set(this.profiles.map((profile) => profile.id));
+      const nextAssignedProfileId = profileIds.has(this.formState.assignedProfileId)
+        ? this.formState.assignedProfileId
+        : this.profiles[0]?.id ?? "";
+      const availableTagIds = new Set(this.unmappedTags.map((tag) => tag.tag_id));
+      const nextNfcTagId =
+        this.formState.nfcTagId && availableTagIds.has(this.formState.nfcTagId)
+          ? this.formState.nfcTagId
+          : "";
+
+      if (
+        nextAssignedProfileId !== this.formState.assignedProfileId ||
+        nextNfcTagId !== this.formState.nfcTagId
+      ) {
+        this.formState = {
+          ...this.formState,
+          assignedProfileId: nextAssignedProfileId,
+          nfcTagId: nextNfcTagId,
+        };
+      }
     }
 
     if (changedProperties.has("tasks")) {
@@ -364,9 +424,16 @@ export class TaskBuilderView extends LitElement {
               </label>
               <label>
                 Assigned profile
-                <select .value=${this.formState.assignedProfileId} @change=${this.handleTextInput("assignedProfileId")} required>
+                <select
+                  data-assignee-select
+                  .value=${this.formState.assignedProfileId}
+                  @change=${this.handleTextInput("assignedProfileId")}
+                  required
+                >
                   ${this.profiles.map(
-                    (profile) => html`<option value=${profile.id}>${profile.display_name}</option>`
+                    (profile) => html`
+                      <option value=${profile.id}>${this.renderProfileLabel(profile)}</option>
+                    `
                   )}
                 </select>
               </label>
@@ -381,8 +448,17 @@ export class TaskBuilderView extends LitElement {
                 <input type="date" .value=${this.formState.startDate} @input=${this.handleTextInput("startDate")} required />
               </label>
               <label>
-                NFC tag ID
-                <input .value=${this.formState.nfcTagId} @input=${this.handleTextInput("nfcTagId")} placeholder="Optional" />
+                NFC tag
+                <select
+                  data-nfc-tag-select
+                  .value=${this.formState.nfcTagId}
+                  @change=${this.handleTextInput("nfcTagId")}
+                >
+                  <option value="">Optional</option>
+                  ${this.availableNfcTagIds.map(
+                    (tagId) => html`<option value=${tagId}>${tagId}</option>`
+                  )}
+                </select>
               </label>
             </div>
             <label>
@@ -587,6 +663,40 @@ export class TaskBuilderView extends LitElement {
         [field]: target.value,
       };
     };
+  }
+
+  private renderProfileLabel(profile: HouseholdProfile): string {
+    const mapping = this.profileMappings.find((candidate) => candidate.profile_id === profile.id);
+    if (!mapping) {
+      return profile.display_name;
+    }
+
+    const haUser = this.haUsers.find((candidate) => candidate.id === mapping.ha_user_id);
+    if (!haUser) {
+      return profile.display_name;
+    }
+
+    return `${profile.display_name} (${haUser.name})`;
+  }
+
+  private get availableNfcTagIds(): string[] {
+    const seenTagIds = new Set<string>();
+    const tagIds: string[] = [];
+
+    if (this.formState.nfcTagId) {
+      seenTagIds.add(this.formState.nfcTagId);
+      tagIds.push(this.formState.nfcTagId);
+    }
+
+    for (const tag of this.unmappedTags) {
+      if (seenTagIds.has(tag.tag_id)) {
+        continue;
+      }
+      seenTagIds.add(tag.tag_id);
+      tagIds.push(tag.tag_id);
+    }
+
+    return tagIds;
   }
 
   private handleNumberInput(field: keyof Pick<TaskFormState, "intervalDays" | "dayOfMonth">) {

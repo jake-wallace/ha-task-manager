@@ -118,6 +118,34 @@ function fetchCurrentProfile(hass) {
         type: `${DOMAIN}/current_profile`
     });
 }
+function fetchProfileMappings(hass) {
+    return callApi(hass, {
+        type: `${DOMAIN}/profile_mappings`
+    });
+}
+function fetchHaUsers(hass) {
+    return callApi(hass, {
+        type: `${DOMAIN}/ha_users`
+    });
+}
+function fetchUnmappedNfcTags(hass) {
+    return callApi(hass, {
+        type: `${DOMAIN}/unmapped_nfc_tags`
+    });
+}
+function importHaUser(hass, options) {
+    return callApi(hass, {
+        type: `${DOMAIN}/import_ha_user`,
+        ha_user_id: options.haUserId
+    });
+}
+function linkNfcTag(hass, options) {
+    return callApi(hass, {
+        type: `${DOMAIN}/link_nfc_tag`,
+        tag_id: options.tagId,
+        task_id: options.taskId
+    });
+}
 function fetchTasks(hass) {
     return callApi(hass, {
         type: `${DOMAIN}/tasks`
@@ -92754,6 +92782,399 @@ MyTasksView = __decorate([
     t("task-manager-my-tasks-view")
 ], MyTasksView);
 
+function formatSeenAt(value) {
+    const timestamp = new Date(value);
+    if (Number.isNaN(timestamp.getTime())) {
+        return value;
+    }
+    return timestamp.toLocaleString([], {
+        dateStyle: "medium",
+        timeStyle: "short",
+    });
+}
+let SetupView = class SetupView extends i$1 {
+    constructor() {
+        super(...arguments);
+        this.haUsers = [];
+        this.profiles = [];
+        this.mappings = [];
+        this.unmappedTags = [];
+        this.tasks = [];
+        this.errorMessage = "";
+        this.busy = false;
+        this.loading = false;
+        this.watchingForScan = false;
+        this.handleWatchToggle = () => {
+            if (this.busy || this.loading) {
+                return;
+            }
+            this.dispatchEvent(new CustomEvent(this.watchingForScan ? "stop-nfc-watch-request" : "start-nfc-watch-request", {
+                bubbles: true,
+                composed: true,
+            }));
+        };
+    }
+    render() {
+        if (this.loading) {
+            return b `<div class="loading">Loading setup data...</div>`;
+        }
+        if (this.errorMessage) {
+            return b `
+        <div class="error" role="alert">
+          <strong>Unable to load setup data.</strong>
+          <span>${this.errorMessage}</span>
+        </div>
+      `;
+        }
+        const mappedUserIds = new Set(this.mappings.map((mapping) => mapping.ha_user_id));
+        const profileNames = new Map(this.profiles.map((profile) => [profile.id, profile.display_name]));
+        const userNames = new Map(this.haUsers.map((user) => [user.id, user.name]));
+        const importableUsers = this.haUsers
+            .filter((user) => user.is_active && !user.system_generated && !mappedUserIds.has(user.id))
+            .slice()
+            .sort((left, right) => left.name.localeCompare(right.name));
+        const linkableTasks = this.tasks
+            .filter((task) => task.active)
+            .slice()
+            .sort((left, right) => left.title.localeCompare(right.title));
+        return b `
+      <div class="setup-grid">
+        <section class="panel">
+          <div>
+            <h3>Mapped Users</h3>
+            <p>Existing Home Assistant user links that power assignment-aware completion.</p>
+          </div>
+          ${this.mappings.length === 0
+            ? b `<div class="empty">No Home Assistant users have been mapped yet.</div>`
+            : b `
+                <div class="list">
+                  ${this.mappings.map((mapping) => b `
+                      <div class="row">
+                        <div class="meta">
+                          <strong>${profileNames.get(mapping.profile_id) ?? mapping.profile_id}</strong>
+                          <span>${userNames.get(mapping.ha_user_id) ?? mapping.ha_user_id}</span>
+                        </div>
+                      </div>
+                    `)}
+                </div>
+              `}
+        </section>
+
+        <section class="panel">
+          <div>
+            <h3>Importable HA Users</h3>
+            <p>Bring unmapped Home Assistant users into the household profile list.</p>
+          </div>
+          ${this.busy ? b `<p class="status">Saving setup changes...</p>` : b ``}
+          ${importableUsers.length === 0
+            ? b `<div class="empty">All available Home Assistant users are already mapped.</div>`
+            : b `
+                <div class="list">
+                  ${importableUsers.map((user) => b `
+                      <div class="row">
+                        <div class="meta">
+                          <strong>${user.name}</strong>
+                          <span>${user.is_admin ? "Administrator" : "Standard user"}</span>
+                        </div>
+                        <button
+                          class="action"
+                          type="button"
+                          data-import-user-id=${user.id}
+                          ?disabled=${this.busy}
+                          @click=${() => this.handleImportUser(user.id)}
+                        >
+                          Import
+                        </button>
+                      </div>
+                    `)}
+                </div>
+              `}
+        </section>
+
+        <section class="panel">
+          <div>
+            <h3>Discovered NFC Tags</h3>
+            <p>Link newly seen tags to tasks so scans can start the confirmation flow.</p>
+          </div>
+          <div class="watch-row">
+            <div class="watch-copy">
+              <strong>${this.watchingForScan ? "Listening for a scan" : "Watch for next scan"}</strong>
+              <span>
+                ${this.watchingForScan
+            ? "Listening for the next NFC scan. Scan an unmapped tag now."
+            : "Keep this panel open and start watching to refresh discoveries when a new unmapped tag is scanned."}
+              </span>
+            </div>
+            <button
+              class="action"
+              type="button"
+              data-watch-toggle
+              ?disabled=${this.busy || this.loading}
+              @click=${this.handleWatchToggle}
+            >
+              ${this.watchingForScan ? "Stop Watching" : "Watch for Next Scan"}
+            </button>
+          </div>
+          ${this.unmappedTags.length === 0
+            ? b `<div class="empty">No unmapped NFC tags have been discovered yet.</div>`
+            : b `
+                <div class="list">
+                  ${this.unmappedTags.map((tag) => b `
+                      <div class="row">
+                        <div class="meta">
+                          <strong>${tag.tag_id}</strong>
+                          <span>
+                            Last seen ${formatSeenAt(tag.last_seen)} via
+                            ${tag.last_source === "nfc_reader" ? "reader" : "phone"}
+                          </span>
+                        </div>
+                        <select
+                          data-link-tag-id=${tag.tag_id}
+                          ?disabled=${this.busy || linkableTasks.length === 0}
+                          @change=${(event) => this.handleLinkTag(event, tag.tag_id)}
+                        >
+                          <option value="">
+                            ${linkableTasks.length === 0 ? "Create a task first" : "Link to task"}
+                          </option>
+                          ${linkableTasks.map((task) => b `<option value=${task.id}>${task.title}</option>`)}
+                        </select>
+                      </div>
+                    `)}
+                </div>
+              `}
+        </section>
+      </div>
+    `;
+    }
+    handleImportUser(haUserId) {
+        if (this.busy) {
+            return;
+        }
+        this.dispatchEvent(new CustomEvent("import-ha-user-request", {
+            detail: { haUserId },
+            bubbles: true,
+            composed: true,
+        }));
+    }
+    handleLinkTag(event, tagId) {
+        if (this.busy) {
+            return;
+        }
+        const target = event.currentTarget;
+        if (!target.value) {
+            return;
+        }
+        this.dispatchEvent(new CustomEvent("link-nfc-tag-request", {
+            detail: { tagId, taskId: target.value },
+            bubbles: true,
+            composed: true,
+        }));
+        target.value = "";
+    }
+};
+SetupView.styles = i$4 `
+    :host {
+      display: block;
+    }
+
+    .setup-grid {
+      display: grid;
+      gap: 18px;
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    }
+
+    .panel {
+      display: grid;
+      gap: 14px;
+      padding: 18px;
+      border-radius: 22px;
+      border: 1px solid rgba(44, 67, 49, 0.08);
+      background: linear-gradient(180deg, rgba(255, 255, 255, 0.94), rgba(244, 247, 240, 0.98));
+      box-shadow: 0 14px 30px rgba(34, 48, 36, 0.05);
+    }
+
+    h3 {
+      margin: 0;
+      color: #203024;
+      font-size: 1.05rem;
+    }
+
+    p {
+      margin: 0;
+      color: #627362;
+      line-height: 1.55;
+    }
+
+    .list {
+      display: grid;
+      gap: 10px;
+    }
+
+    .row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 14px;
+      border-radius: 18px;
+      border: 1px solid rgba(44, 67, 49, 0.08);
+      background: rgba(250, 251, 248, 0.9);
+    }
+
+    .meta {
+      min-width: 0;
+      display: grid;
+      gap: 4px;
+    }
+
+    .meta strong {
+      color: #203024;
+      word-break: break-word;
+    }
+
+    .meta span {
+      color: #6a7a6c;
+      font-size: 0.92rem;
+      word-break: break-word;
+    }
+
+    .action,
+    select {
+      appearance: none;
+      border: 1px solid rgba(44, 67, 49, 0.12);
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.95);
+      color: #294132;
+      font: inherit;
+    }
+
+    .action {
+      cursor: pointer;
+      font-weight: 700;
+      padding: 10px 16px;
+      white-space: nowrap;
+    }
+
+    select {
+      min-width: 168px;
+      padding: 10px 14px;
+    }
+
+    .empty {
+      padding: 22px;
+      border-radius: 20px;
+      border: 1px dashed rgba(47, 76, 53, 0.18);
+      background: rgba(244, 247, 240, 0.8);
+      color: #536553;
+      text-align: center;
+    }
+
+    .status {
+      font-weight: 600;
+      color: #476048;
+    }
+
+    .watch-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 14px;
+      border-radius: 18px;
+      border: 1px solid rgba(44, 67, 49, 0.08);
+      background: rgba(248, 250, 245, 0.92);
+    }
+
+    .watch-copy {
+      display: grid;
+      gap: 4px;
+      min-width: 0;
+    }
+
+    .watch-copy strong {
+      color: #203024;
+    }
+
+    .watch-copy span {
+      color: #627362;
+      font-size: 0.92rem;
+      line-height: 1.5;
+    }
+
+    .loading {
+      padding: 28px;
+      border-radius: 20px;
+      border: 1px dashed rgba(47, 76, 53, 0.18);
+      background: rgba(244, 247, 240, 0.8);
+      color: #476048;
+      text-align: center;
+      font-weight: 600;
+    }
+
+    .error {
+      display: grid;
+      gap: 10px;
+      padding: 22px;
+      border-radius: 20px;
+      border: 1px solid rgba(160, 67, 48, 0.18);
+      background: rgba(196, 99, 76, 0.08);
+      color: #7f3123;
+    }
+
+    .error strong {
+      font-size: 1rem;
+    }
+
+    button:disabled,
+    select:disabled {
+      opacity: 0.65;
+      cursor: wait;
+    }
+
+    @media (max-width: 640px) {
+      .row {
+        flex-direction: column;
+        align-items: stretch;
+      }
+
+      select,
+      .action {
+        width: 100%;
+        box-sizing: border-box;
+      }
+    }
+  `;
+__decorate([
+    n({ attribute: false })
+], SetupView.prototype, "haUsers", void 0);
+__decorate([
+    n({ attribute: false })
+], SetupView.prototype, "profiles", void 0);
+__decorate([
+    n({ attribute: false })
+], SetupView.prototype, "mappings", void 0);
+__decorate([
+    n({ attribute: false })
+], SetupView.prototype, "unmappedTags", void 0);
+__decorate([
+    n({ attribute: false })
+], SetupView.prototype, "tasks", void 0);
+__decorate([
+    n()
+], SetupView.prototype, "errorMessage", void 0);
+__decorate([
+    n({ type: Boolean })
+], SetupView.prototype, "busy", void 0);
+__decorate([
+    n({ type: Boolean })
+], SetupView.prototype, "loading", void 0);
+__decorate([
+    n({ type: Boolean })
+], SetupView.prototype, "watchingForScan", void 0);
+SetupView = __decorate([
+    t("task-manager-setup-view")
+], SetupView);
+
 const NEW_TASK_ID = "__new__";
 function todayIso$1() {
     const now = new Date();
@@ -92804,12 +93225,18 @@ let TaskBuilderView = class TaskBuilderView extends i$1 {
         super(...arguments);
         this.tasks = [];
         this.profiles = [];
+        this.profileMappings = [];
+        this.haUsers = [];
+        this.unmappedTags = [];
+        this.handoffTaskId = "";
+        this.draftContextKey = "";
         this.saving = false;
         this.statusMessage = "";
         this.errorMessage = "";
         this.selectedTaskId = NEW_TASK_ID;
         this.formState = emptyFormState([]);
         this.localError = "";
+        this.lastAppliedHandoffTaskId = "";
         this.addSkipWindow = () => {
             this.localError = "";
             this.formState = {
@@ -92827,11 +93254,45 @@ let TaskBuilderView = class TaskBuilderView extends i$1 {
         };
     }
     willUpdate(changedProperties) {
+        if (changedProperties.has("draftContextKey") && this.selectedTaskId === NEW_TASK_ID) {
+            this.localError = "";
+            this.formState = emptyFormState(this.profiles);
+        }
+        if ((changedProperties.has("handoffTaskId") || changedProperties.has("tasks")) &&
+            this.handoffTaskId &&
+            this.handoffTaskId !== this.lastAppliedHandoffTaskId) {
+            const handoffTask = this.tasks.find((task) => task.id === this.handoffTaskId);
+            if (handoffTask) {
+                this.selectedTaskId = handoffTask.id;
+                this.localError = "";
+                this.formState = formStateFromTask(handoffTask);
+                this.lastAppliedHandoffTaskId = handoffTask.id;
+            }
+        }
         if (changedProperties.has("profiles") && !this.formState.assignedProfileId) {
             this.formState = {
                 ...this.formState,
                 assignedProfileId: this.profiles[0]?.id ?? "",
             };
+        }
+        if (this.selectedTaskId === NEW_TASK_ID &&
+            (changedProperties.has("profiles") || changedProperties.has("unmappedTags"))) {
+            const profileIds = new Set(this.profiles.map((profile) => profile.id));
+            const nextAssignedProfileId = profileIds.has(this.formState.assignedProfileId)
+                ? this.formState.assignedProfileId
+                : this.profiles[0]?.id ?? "";
+            const availableTagIds = new Set(this.unmappedTags.map((tag) => tag.tag_id));
+            const nextNfcTagId = this.formState.nfcTagId && availableTagIds.has(this.formState.nfcTagId)
+                ? this.formState.nfcTagId
+                : "";
+            if (nextAssignedProfileId !== this.formState.assignedProfileId ||
+                nextNfcTagId !== this.formState.nfcTagId) {
+                this.formState = {
+                    ...this.formState,
+                    assignedProfileId: nextAssignedProfileId,
+                    nfcTagId: nextNfcTagId,
+                };
+            }
         }
         if (changedProperties.has("tasks")) {
             const selectedTask = this.tasks.find((task) => task.id === this.selectedTaskId);
@@ -92883,8 +93344,15 @@ let TaskBuilderView = class TaskBuilderView extends i$1 {
               </label>
               <label>
                 Assigned profile
-                <select .value=${this.formState.assignedProfileId} @change=${this.handleTextInput("assignedProfileId")} required>
-                  ${this.profiles.map((profile) => b `<option value=${profile.id}>${profile.display_name}</option>`)}
+                <select
+                  data-assignee-select
+                  .value=${this.formState.assignedProfileId}
+                  @change=${this.handleTextInput("assignedProfileId")}
+                  required
+                >
+                  ${this.profiles.map((profile) => b `
+                      <option value=${profile.id}>${this.renderProfileLabel(profile)}</option>
+                    `)}
                 </select>
               </label>
             </div>
@@ -92898,8 +93366,15 @@ let TaskBuilderView = class TaskBuilderView extends i$1 {
                 <input type="date" .value=${this.formState.startDate} @input=${this.handleTextInput("startDate")} required />
               </label>
               <label>
-                NFC tag ID
-                <input .value=${this.formState.nfcTagId} @input=${this.handleTextInput("nfcTagId")} placeholder="Optional" />
+                NFC tag
+                <select
+                  data-nfc-tag-select
+                  .value=${this.formState.nfcTagId}
+                  @change=${this.handleTextInput("nfcTagId")}
+                >
+                  <option value="">Optional</option>
+                  ${this.availableNfcTagIds.map((tagId) => b `<option value=${tagId}>${tagId}</option>`)}
+                </select>
               </label>
             </div>
             <label>
@@ -93092,6 +93567,33 @@ let TaskBuilderView = class TaskBuilderView extends i$1 {
                 [field]: target.value,
             };
         };
+    }
+    renderProfileLabel(profile) {
+        const mapping = this.profileMappings.find((candidate) => candidate.profile_id === profile.id);
+        if (!mapping) {
+            return profile.display_name;
+        }
+        const haUser = this.haUsers.find((candidate) => candidate.id === mapping.ha_user_id);
+        if (!haUser) {
+            return profile.display_name;
+        }
+        return `${profile.display_name} (${haUser.name})`;
+    }
+    get availableNfcTagIds() {
+        const seenTagIds = new Set();
+        const tagIds = [];
+        if (this.formState.nfcTagId) {
+            seenTagIds.add(this.formState.nfcTagId);
+            tagIds.push(this.formState.nfcTagId);
+        }
+        for (const tag of this.unmappedTags) {
+            if (seenTagIds.has(tag.tag_id)) {
+                continue;
+            }
+            seenTagIds.add(tag.tag_id);
+            tagIds.push(tag.tag_id);
+        }
+        return tagIds;
     }
     handleNumberInput(field) {
         return (event) => {
@@ -93418,6 +93920,21 @@ __decorate([
     n({ attribute: false })
 ], TaskBuilderView.prototype, "profiles", void 0);
 __decorate([
+    n({ attribute: false })
+], TaskBuilderView.prototype, "profileMappings", void 0);
+__decorate([
+    n({ attribute: false })
+], TaskBuilderView.prototype, "haUsers", void 0);
+__decorate([
+    n({ attribute: false })
+], TaskBuilderView.prototype, "unmappedTags", void 0);
+__decorate([
+    n({ attribute: false })
+], TaskBuilderView.prototype, "handoffTaskId", void 0);
+__decorate([
+    n()
+], TaskBuilderView.prototype, "draftContextKey", void 0);
+__decorate([
     n({ type: Boolean })
 ], TaskBuilderView.prototype, "saving", void 0);
 __decorate([
@@ -93439,6 +93956,7 @@ TaskBuilderView = __decorate([
     t("task-manager-task-builder-view")
 ], TaskBuilderView);
 
+const SETUP_DISCOVERY_WATCH_INTERVAL_MS = 1500;
 const NAVIGATION_TABS = [
     {
         id: "my-tasks",
@@ -93459,6 +93977,11 @@ const NAVIGATION_TABS = [
         id: "admin",
         label: "Manage Tasks",
         description: "Create and update recurring household tasks."
+    },
+    {
+        id: "setup",
+        label: "Setup",
+        description: "Import Home Assistant users and link discovered NFC tags."
     }
 ];
 function todayIso() {
@@ -93482,6 +94005,10 @@ function errorMessage(error) {
     }
     return String(error);
 }
+function upsertTask(tasks, savedTask, requestedTaskId) {
+    const retainedTasks = tasks.filter((task) => task.id !== savedTask.id && task.id !== requestedTaskId);
+    return [...retainedTasks, savedTask];
+}
 let HaTaskManagerPanel = class HaTaskManagerPanel extends i$1 {
     constructor() {
         super(...arguments);
@@ -93495,6 +94022,9 @@ let HaTaskManagerPanel = class HaTaskManagerPanel extends i$1 {
         this.dueInstances = [];
         this.pendingConfirmations = [];
         this.analyticsSnapshots = {};
+        this.profileMappings = [];
+        this.haUsers = [];
+        this.unmappedTags = [];
         this.manualCompletionDialog = null;
         this.manualCompletionBusy = false;
         this.manualCompletionError = "";
@@ -93502,12 +94032,26 @@ let HaTaskManagerPanel = class HaTaskManagerPanel extends i$1 {
         this.nfcBusy = false;
         this.nfcError = "";
         this.taskBuilderSaving = false;
+        this.setupBusy = false;
+        this.setupLoading = false;
+        this.setupWatchActive = false;
         this.taskBuilderStatusMessage = "";
         this.taskBuilderErrorMessage = "";
+        this.taskBuilderHandoffTaskId = "";
         this.pendingPollHandle = null;
+        this.setupWatchPollHandle = null;
         this.hasLoadedInitialData = false;
-        this.lastLoadedUserId = "";
+        this.lastLoadedUserContextKey = "";
+        this.coreLoadRequestId = 0;
+        this.setupLoadRequestId = 0;
+        this.setupWatchRefreshRequestId = 0;
+        this.setupMutationRequestId = 0;
+        this.taskSaveRequestId = 0;
+        this.setupWatchSessionId = 0;
         this.snoozedPendingAttemptIds = new Set();
+        this.panelErrorSource = null;
+        this.hasLoadedSetupData = false;
+        this.setupWatchBaselineTagIds = new Set();
         this.reviewPendingConfirmations = () => {
             if (this.pendingConfirmations.length === 0) {
                 return;
@@ -93587,8 +94131,74 @@ let HaTaskManagerPanel = class HaTaskManagerPanel extends i$1 {
         this.refreshAnalytics = async () => {
             await this.loadAnalytics();
         };
+        this.handleStartSetupWatch = () => {
+            if (!this.hass || !this.canAccessAdminViews || this.setupLoading || this.setupWatchActive) {
+                return;
+            }
+            this.setupWatchBaselineTagIds = new Set(this.unmappedTags.map((tag) => tag.tag_id));
+            this.setupWatchSessionId += 1;
+            this.setupWatchActive = true;
+            void this.pollSetupDiscoveries();
+            this.startSetupWatchPolling();
+        };
+        this.handleStopSetupWatch = () => {
+            this.stopSetupWatch();
+        };
+        this.handleImportHaUser = async (event) => {
+            const mutationRequest = this.beginSetupMutation();
+            if (!mutationRequest) {
+                return;
+            }
+            this.setupBusy = true;
+            this.clearPanelError();
+            try {
+                await importHaUser(mutationRequest.hass, { haUserId: event.detail.haUserId });
+                if (!this.isCurrentSetupMutation(mutationRequest.requestId, mutationRequest.userContextKey)) {
+                    return;
+                }
+                await this.loadCoreData();
+                await this.loadSetupData();
+            }
+            catch (error) {
+                if (this.isCurrentSetupMutation(mutationRequest.requestId, mutationRequest.userContextKey)) {
+                    this.setPanelError(errorMessage(error));
+                }
+            }
+            finally {
+                if (this.isCurrentSetupMutation(mutationRequest.requestId, mutationRequest.userContextKey)) {
+                    this.setupBusy = false;
+                }
+            }
+        };
+        this.handleLinkNfcTag = async (event) => {
+            const mutationRequest = this.beginSetupMutation();
+            if (!mutationRequest) {
+                return;
+            }
+            this.setupBusy = true;
+            this.clearPanelError();
+            try {
+                await linkNfcTag(mutationRequest.hass, event.detail);
+                if (!this.isCurrentSetupMutation(mutationRequest.requestId, mutationRequest.userContextKey)) {
+                    return;
+                }
+                await this.loadCoreData();
+                await this.loadSetupData();
+            }
+            catch (error) {
+                if (this.isCurrentSetupMutation(mutationRequest.requestId, mutationRequest.userContextKey)) {
+                    this.setPanelError(errorMessage(error));
+                }
+            }
+            finally {
+                if (this.isCurrentSetupMutation(mutationRequest.requestId, mutationRequest.userContextKey)) {
+                    this.setupBusy = false;
+                }
+            }
+        };
         this.handleSaveTask = async (event) => {
-            if (!this.hass) {
+            const mutationRequest = this.beginTaskSave();
+            if (!mutationRequest) {
                 return;
             }
             const detail = event.detail;
@@ -93596,36 +94206,68 @@ let HaTaskManagerPanel = class HaTaskManagerPanel extends i$1 {
             this.taskBuilderStatusMessage = "";
             this.taskBuilderErrorMessage = "";
             try {
-                const savedTask = await saveTask(this.hass, detail.task);
+                const savedTask = await saveTask(mutationRequest.hass, detail.task);
+                if (!this.isCurrentTaskSave(mutationRequest.requestId, mutationRequest.userContextKey)) {
+                    return;
+                }
+                this.tasks = upsertTask(this.tasks, savedTask, detail.task.id);
+                this.taskBuilderHandoffTaskId = savedTask.id;
                 this.taskBuilderStatusMessage = `Saved ${savedTask.title}.`;
-                await this.loadCoreData();
-                if (this.currentView === "analytics") {
+                await Promise.all([
+                    this.loadCoreData(),
+                    this.loadSetupData(),
+                ]);
+                if (this.isCurrentTaskSave(mutationRequest.requestId, mutationRequest.userContextKey) &&
+                    this.currentView === "analytics") {
                     await this.loadAnalytics();
                 }
             }
             catch (error) {
-                this.taskBuilderErrorMessage = errorMessage(error);
+                if (this.isCurrentTaskSave(mutationRequest.requestId, mutationRequest.userContextKey)) {
+                    this.taskBuilderErrorMessage = errorMessage(error);
+                }
             }
             finally {
-                this.taskBuilderSaving = false;
+                if (this.isCurrentTaskSave(mutationRequest.requestId, mutationRequest.userContextKey)) {
+                    this.taskBuilderSaving = false;
+                }
             }
         };
     }
     updated(changedProperties) {
         if (changedProperties.has("hass") && this.hass) {
-            const currentUserId = this.hass.user?.id ?? "";
-            if (!this.hasLoadedInitialData || this.lastLoadedUserId !== currentUserId) {
+            this.stopSetupWatch();
+            const currentUserContextKey = this.currentUserContextKey;
+            if (!this.hasLoadedInitialData || this.lastLoadedUserContextKey !== currentUserContextKey) {
+                this.invalidateAdminMutations();
                 this.hasLoadedInitialData = true;
-                this.lastLoadedUserId = currentUserId;
+                this.lastLoadedUserContextKey = currentUserContextKey;
+                this.hasLoadedSetupData = false;
+                this.setupLoading = this.activeView === "setup" || this.activeView === "admin";
+                this.profileMappings = [];
+                this.haUsers = [];
+                this.unmappedTags = [];
                 void this.loadCoreData();
+                if (this.activeView === "setup" || this.activeView === "admin") {
+                    void this.loadSetupData();
+                }
                 this.startPendingPolling();
             }
         }
-        if (changedProperties.has("currentView") && this.currentView === "analytics") {
-            void this.loadAnalytics();
+        if (changedProperties.has("currentView")) {
+            if (this.activeView !== "setup") {
+                this.stopSetupWatch();
+            }
+            if (this.activeView === "analytics") {
+                void this.loadAnalytics();
+            }
+            if ((this.activeView === "setup" || this.activeView === "admin") && !this.hasLoadedSetupData) {
+                void this.loadSetupData();
+            }
         }
     }
     disconnectedCallback() {
+        this.stopSetupWatch();
         if (this.pendingPollHandle !== null) {
             window.clearInterval(this.pendingPollHandle);
             this.pendingPollHandle = null;
@@ -93633,7 +94275,9 @@ let HaTaskManagerPanel = class HaTaskManagerPanel extends i$1 {
         super.disconnectedCallback();
     }
     render() {
-        const activeTab = NAVIGATION_TABS.find((tab) => tab.id === this.currentView);
+        const activeView = this.activeView;
+        const navigationTabs = this.navigationTabs;
+        const activeTab = navigationTabs.find((tab) => tab.id === activeView);
         const today = todayIso();
         const currentProfileId = this.currentProfile?.profile_id;
         const myTaskIds = new Set(this.tasks
@@ -93667,13 +94311,11 @@ let HaTaskManagerPanel = class HaTaskManagerPanel extends i$1 {
           </div>
         </header>
         <nav aria-label="Task Manager sections">
-          ${NAVIGATION_TABS.map((tab) => b `
+          ${navigationTabs.map((tab) => b `
               <button
                 type="button"
-                aria-selected=${tab.id === this.currentView ? "true" : "false"}
-                @click=${() => {
-            this.currentView = tab.id;
-        }}
+                aria-selected=${tab.id === activeView ? "true" : "false"}
+                @click=${() => this.selectView(tab.id)}
               >
                 ${tab.label}
               </button>
@@ -93684,7 +94326,7 @@ let HaTaskManagerPanel = class HaTaskManagerPanel extends i$1 {
           <h2>${activeTab?.label ?? "Task Manager"}</h2>
           <p class="subtitle">${activeTab?.description ?? ""}</p>
           <div class="view-shell">
-            ${this.renderCurrentView()}
+            ${this.renderCurrentView(activeView)}
           </div>
         </section>
         <task-manager-completion-dialog
@@ -93709,11 +94351,11 @@ let HaTaskManagerPanel = class HaTaskManagerPanel extends i$1 {
       </main>
     `;
     }
-    renderCurrentView() {
+    renderCurrentView(view) {
         if (this.coreLoading && this.tasks.length === 0) {
             return b `<div>Loading panel data...</div>`;
         }
-        switch (this.currentView) {
+        switch (view) {
             case "my-tasks":
                 return b `
           <task-manager-my-tasks-view
@@ -93750,11 +94392,34 @@ let HaTaskManagerPanel = class HaTaskManagerPanel extends i$1 {
           <task-manager-task-builder-view
             .tasks=${this.tasks}
             .profiles=${this.profiles}
+            .profileMappings=${this.profileMappings}
+            .haUsers=${this.haUsers}
+            .unmappedTags=${this.unmappedTags}
+            .draftContextKey=${this.currentUserContextKey}
+            .handoffTaskId=${this.taskBuilderHandoffTaskId}
             .saving=${this.taskBuilderSaving}
             .statusMessage=${this.taskBuilderStatusMessage}
             .errorMessage=${this.taskBuilderErrorMessage}
             @save-task-request=${this.handleSaveTask}
           ></task-manager-task-builder-view>
+        `;
+            case "setup":
+                return b `
+          <task-manager-setup-view
+            .haUsers=${this.haUsers}
+            .profiles=${this.profiles}
+            .mappings=${this.profileMappings}
+            .unmappedTags=${this.unmappedTags}
+            .tasks=${this.tasks}
+            .watchingForScan=${this.setupWatchActive}
+            .errorMessage=${this.panelErrorSource === "setup-load" ? this.panelError : ""}
+            .busy=${this.setupBusy}
+            .loading=${this.setupLoading && !this.hasLoadedSetupData}
+            @import-ha-user-request=${this.handleImportHaUser}
+            @link-nfc-tag-request=${this.handleLinkNfcTag}
+            @start-nfc-watch-request=${this.handleStartSetupWatch}
+            @stop-nfc-watch-request=${this.handleStopSetupWatch}
+          ></task-manager-setup-view>
         `;
             default:
                 return A;
@@ -93778,22 +94443,133 @@ let HaTaskManagerPanel = class HaTaskManagerPanel extends i$1 {
             void this.refreshPendingConfirmations();
         }, 10000);
     }
-    async loadCoreData() {
+    startSetupWatchPolling() {
+        if (this.setupWatchPollHandle !== null) {
+            window.clearInterval(this.setupWatchPollHandle);
+        }
+        this.setupWatchPollHandle = window.setInterval(() => {
+            void this.pollSetupDiscoveries();
+        }, SETUP_DISCOVERY_WATCH_INTERVAL_MS);
+    }
+    stopSetupWatch() {
+        this.setupWatchSessionId += 1;
+        this.setupWatchActive = false;
+        if (this.setupWatchPollHandle !== null) {
+            window.clearInterval(this.setupWatchPollHandle);
+            this.setupWatchPollHandle = null;
+        }
+    }
+    clearPanelError() {
+        this.panelError = "";
+        this.panelErrorSource = null;
+    }
+    setPanelError(message, source = null) {
+        this.panelError = message;
+        this.panelErrorSource = source;
+    }
+    clearSetupLoadError() {
+        if (this.panelErrorSource === "setup-load") {
+            this.clearPanelError();
+        }
+    }
+    invalidateAdminMutations() {
+        this.setupMutationRequestId += 1;
+        this.taskSaveRequestId += 1;
+        this.setupBusy = false;
+        this.taskBuilderSaving = false;
+        this.taskBuilderStatusMessage = "";
+        this.taskBuilderErrorMessage = "";
+        this.taskBuilderHandoffTaskId = "";
+    }
+    beginCoreLoad() {
         if (!this.hass) {
+            return null;
+        }
+        return {
+            hass: this.hass,
+            requestId: ++this.coreLoadRequestId,
+            userContextKey: this.currentUserContextKey,
+        };
+    }
+    beginSetupLoad() {
+        if (!this.hass || !this.canAccessAdminViews) {
+            return null;
+        }
+        return {
+            hass: this.hass,
+            requestId: ++this.setupLoadRequestId,
+            userContextKey: this.currentUserContextKey,
+        };
+    }
+    beginSetupWatchRefresh() {
+        if (!this.hass || !this.canAccessAdminViews || !this.setupWatchActive) {
+            return null;
+        }
+        return {
+            hass: this.hass,
+            requestId: ++this.setupWatchRefreshRequestId,
+            userContextKey: this.currentUserContextKey,
+            watchSessionId: this.setupWatchSessionId,
+        };
+    }
+    beginSetupMutation() {
+        if (!this.hass || !this.canAccessAdminViews) {
+            return null;
+        }
+        return {
+            hass: this.hass,
+            requestId: ++this.setupMutationRequestId,
+            userContextKey: this.currentUserContextKey,
+        };
+    }
+    beginTaskSave() {
+        if (!this.hass || !this.canAccessAdminViews) {
+            return null;
+        }
+        return {
+            hass: this.hass,
+            requestId: ++this.taskSaveRequestId,
+            userContextKey: this.currentUserContextKey,
+        };
+    }
+    isCurrentCoreLoad(requestId, userContextKey) {
+        return requestId === this.coreLoadRequestId && userContextKey === this.currentUserContextKey;
+    }
+    isCurrentSetupLoad(requestId, userContextKey) {
+        return requestId === this.setupLoadRequestId && userContextKey === this.currentUserContextKey;
+    }
+    isCurrentSetupMutation(requestId, userContextKey) {
+        return requestId === this.setupMutationRequestId && userContextKey === this.currentUserContextKey;
+    }
+    isCurrentTaskSave(requestId, userContextKey) {
+        return requestId === this.taskSaveRequestId && userContextKey === this.currentUserContextKey;
+    }
+    isCurrentSetupWatchRefresh(requestId, userContextKey, watchSessionId) {
+        return (this.setupWatchActive &&
+            requestId === this.setupWatchRefreshRequestId &&
+            userContextKey === this.currentUserContextKey &&
+            watchSessionId === this.setupWatchSessionId);
+    }
+    async loadCoreData() {
+        const loadRequest = this.beginCoreLoad();
+        if (!loadRequest) {
             return;
         }
         this.coreLoading = true;
-        this.panelError = "";
+        this.clearPanelError();
         try {
             const today = todayIso();
             const fromDate = shiftIsoDate(today, -14);
             const [currentProfile, profiles, tasks, dueInstances, pendingConfirmations] = await Promise.all([
-                fetchCurrentProfile(this.hass),
-                fetchProfiles(this.hass),
-                fetchTasks(this.hass),
-                fetchDueInstances(this.hass, { fromDate, horizonDays: 35 }),
-                fetchPendingConfirmations(this.hass),
+                fetchCurrentProfile(loadRequest.hass),
+                fetchProfiles(loadRequest.hass),
+                fetchTasks(loadRequest.hass),
+                fetchDueInstances(loadRequest.hass, { fromDate, horizonDays: 35 }),
+                fetchPendingConfirmations(loadRequest.hass),
             ]);
+            if (!this.isCurrentCoreLoad(loadRequest.requestId, loadRequest.userContextKey)) {
+                return;
+            }
             this.currentProfile = currentProfile;
             this.profiles = profiles;
             this.tasks = tasks;
@@ -93803,13 +94579,78 @@ let HaTaskManagerPanel = class HaTaskManagerPanel extends i$1 {
             this.ensurePendingDialog();
         }
         catch (error) {
-            this.panelError = errorMessage(error);
+            if (this.isCurrentCoreLoad(loadRequest.requestId, loadRequest.userContextKey)) {
+                this.setPanelError(errorMessage(error));
+            }
         }
         finally {
-            this.coreLoading = false;
+            if (this.isCurrentCoreLoad(loadRequest.requestId, loadRequest.userContextKey)) {
+                this.coreLoading = false;
+            }
         }
-        if (this.currentView === "analytics") {
+        if (this.isCurrentCoreLoad(loadRequest.requestId, loadRequest.userContextKey) &&
+            this.currentView === "analytics") {
             await this.loadAnalytics();
+        }
+    }
+    async loadSetupData() {
+        const loadRequest = this.beginSetupLoad();
+        if (!loadRequest) {
+            return;
+        }
+        this.setupLoading = true;
+        try {
+            const [profileMappings, haUsers, unmappedTags] = await Promise.all([
+                fetchProfileMappings(loadRequest.hass),
+                fetchHaUsers(loadRequest.hass),
+                fetchUnmappedNfcTags(loadRequest.hass),
+            ]);
+            if (!this.isCurrentSetupLoad(loadRequest.requestId, loadRequest.userContextKey)) {
+                return;
+            }
+            this.profileMappings = profileMappings;
+            this.haUsers = haUsers;
+            this.unmappedTags = unmappedTags;
+            this.hasLoadedSetupData = true;
+            this.clearSetupLoadError();
+        }
+        catch (error) {
+            if (this.isCurrentSetupLoad(loadRequest.requestId, loadRequest.userContextKey)) {
+                this.profileMappings = [];
+                this.haUsers = [];
+                this.unmappedTags = [];
+                this.hasLoadedSetupData = false;
+                this.setPanelError(errorMessage(error), "setup-load");
+            }
+        }
+        finally {
+            if (this.isCurrentSetupLoad(loadRequest.requestId, loadRequest.userContextKey)) {
+                this.setupLoading = false;
+            }
+        }
+    }
+    async pollSetupDiscoveries() {
+        const refreshRequest = this.beginSetupWatchRefresh();
+        if (!refreshRequest) {
+            return;
+        }
+        try {
+            const unmappedTags = await fetchUnmappedNfcTags(refreshRequest.hass);
+            if (!this.isCurrentSetupWatchRefresh(refreshRequest.requestId, refreshRequest.userContextKey, refreshRequest.watchSessionId)) {
+                return;
+            }
+            this.unmappedTags = unmappedTags;
+            const discoveredNewTag = unmappedTags.some((tag) => !this.setupWatchBaselineTagIds.has(tag.tag_id));
+            if (discoveredNewTag) {
+                this.stopSetupWatch();
+            }
+        }
+        catch (error) {
+            if (!this.isCurrentSetupWatchRefresh(refreshRequest.requestId, refreshRequest.userContextKey, refreshRequest.watchSessionId)) {
+                return;
+            }
+            this.stopSetupWatch();
+            this.setPanelError(errorMessage(error));
         }
     }
     async loadAnalytics() {
@@ -93829,7 +94670,7 @@ let HaTaskManagerPanel = class HaTaskManagerPanel extends i$1 {
             this.analyticsSnapshots = Object.fromEntries(snapshots);
         }
         catch (error) {
-            this.panelError = errorMessage(error);
+            this.setPanelError(errorMessage(error));
         }
         finally {
             this.analyticsLoading = false;
@@ -93848,7 +94689,7 @@ let HaTaskManagerPanel = class HaTaskManagerPanel extends i$1 {
             this.ensurePendingDialog();
         }
         catch (error) {
-            this.panelError = errorMessage(error);
+            this.setPanelError(errorMessage(error));
         }
     }
     pruneSnoozedAttempts() {
@@ -93866,6 +94707,37 @@ let HaTaskManagerPanel = class HaTaskManagerPanel extends i$1 {
         const nextAttempt = this.pendingConfirmations.find((attempt) => forceOpen || !this.snoozedPendingAttemptIds.has(attempt.id));
         this.activeNfcAttemptId = nextAttempt?.id ?? "";
         this.nfcError = "";
+    }
+    get canAccessAdminViews() {
+        return this.hass?.user?.is_admin === true;
+    }
+    get currentUserContextKey() {
+        const userId = this.hass?.user?.id ?? "";
+        const accessLevel = this.canAccessAdminViews ? "admin" : "user";
+        return `${userId}:${accessLevel}`;
+    }
+    get activeView() {
+        if ((this.currentView === "setup" || this.currentView === "admin") && !this.canAccessAdminViews) {
+            return "my-tasks";
+        }
+        return this.currentView;
+    }
+    get navigationTabs() {
+        return NAVIGATION_TABS.filter((tab) => (tab.id !== "setup" && tab.id !== "admin") || this.canAccessAdminViews);
+    }
+    selectView(view) {
+        if (view === "setup" || view === "admin") {
+            if (!this.canAccessAdminViews) {
+                return;
+            }
+            if (view === "setup" && !this.hasLoadedSetupData) {
+                this.setupLoading = true;
+            }
+        }
+        if (view !== "setup") {
+            this.stopSetupWatch();
+        }
+        this.currentView = view;
     }
 };
 HaTaskManagerPanel.styles = i$4 `
@@ -94074,6 +94946,15 @@ __decorate([
 ], HaTaskManagerPanel.prototype, "analyticsSnapshots", void 0);
 __decorate([
     r()
+], HaTaskManagerPanel.prototype, "profileMappings", void 0);
+__decorate([
+    r()
+], HaTaskManagerPanel.prototype, "haUsers", void 0);
+__decorate([
+    r()
+], HaTaskManagerPanel.prototype, "unmappedTags", void 0);
+__decorate([
+    r()
 ], HaTaskManagerPanel.prototype, "manualCompletionDialog", void 0);
 __decorate([
     r()
@@ -94095,10 +94976,22 @@ __decorate([
 ], HaTaskManagerPanel.prototype, "taskBuilderSaving", void 0);
 __decorate([
     r()
+], HaTaskManagerPanel.prototype, "setupBusy", void 0);
+__decorate([
+    r()
+], HaTaskManagerPanel.prototype, "setupLoading", void 0);
+__decorate([
+    r()
+], HaTaskManagerPanel.prototype, "setupWatchActive", void 0);
+__decorate([
+    r()
 ], HaTaskManagerPanel.prototype, "taskBuilderStatusMessage", void 0);
 __decorate([
     r()
 ], HaTaskManagerPanel.prototype, "taskBuilderErrorMessage", void 0);
+__decorate([
+    r()
+], HaTaskManagerPanel.prototype, "taskBuilderHandoffTaskId", void 0);
 HaTaskManagerPanel = __decorate([
     t("ha-task-manager-panel")
 ], HaTaskManagerPanel);
