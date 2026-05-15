@@ -18,3 +18,13 @@ class NfcTagMapping:
     task_id: str = ""
     label: str = ""
     created_at: datetime = field(default_factory=utc_now)
+
+
+@dataclass
+class NfcDiscoveryEntry:
+    """Observed NFC tag metadata retained until linked to a task."""
+
+    tag_id: str = ""
+    first_seen: datetime = field(default_factory=utc_now)
+    last_seen: datetime = field(default_factory=utc_now)
+    last_source: str = "nfc_phone"

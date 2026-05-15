@@ -10,6 +10,17 @@ from .time import utc_now
 
 
 @dataclass
+class HaUserSummary:
+    """Serializable Home Assistant user summary for identity setup flows."""
+
+    id: str = ""
+    name: str = ""
+    is_active: bool = False
+    is_admin: bool = False
+    system_generated: bool = False
+
+
+@dataclass
 class HouseholdProfile:
     """Household identity used for assignments and analytics."""
 

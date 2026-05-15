@@ -17,7 +17,9 @@ from .models import (
     CompletionAttempt,
     CompletionRecord,
     CompletionSource,
+    HaUserSummary,
     HouseholdProfile,
+    NfcDiscoveryEntry,
     NfcTagMapping,
     ProfileAnalyticsSnapshot,
     RecurrenceFrequency,
@@ -177,6 +179,17 @@ def user_profile_mapping_to_dict(mapping: UserProfileMapping) -> dict[str, Any]:
     }
 
 
+def ha_user_summary_to_dict(ha_user: HaUserSummary) -> dict[str, Any]:
+    """Serialize a Home Assistant user summary."""
+    return {
+        "id": ha_user.id,
+        "name": ha_user.name,
+        "is_active": ha_user.is_active,
+        "is_admin": ha_user.is_admin,
+        "system_generated": ha_user.system_generated,
+    }
+
+
 def nfc_tag_mapping_from_dict(raw_mapping: dict[str, Any]) -> NfcTagMapping:
     """Deserialize a raw NFC tag mapping payload."""
     return NfcTagMapping(
@@ -196,6 +209,26 @@ def nfc_tag_mapping_to_dict(mapping: NfcTagMapping) -> dict[str, Any]:
         "task_id": mapping.task_id,
         "label": mapping.label,
         "created_at": mapping.created_at.isoformat(),
+    }
+
+
+def nfc_discovery_entry_from_dict(raw_entry: dict[str, Any]) -> NfcDiscoveryEntry:
+    """Deserialize a raw NFC discovery entry payload."""
+    return NfcDiscoveryEntry(
+        tag_id=raw_entry.get("tag_id", ""),
+        first_seen=_parse_datetime(raw_entry["first_seen"]),
+        last_seen=_parse_datetime(raw_entry["last_seen"]),
+        last_source=raw_entry.get("last_source", "nfc_phone"),
+    )
+
+
+def nfc_discovery_entry_to_dict(entry: NfcDiscoveryEntry) -> dict[str, Any]:
+    """Serialize an NFC discovery entry."""
+    return {
+        "tag_id": entry.tag_id,
+        "first_seen": entry.first_seen.isoformat(),
+        "last_seen": entry.last_seen.isoformat(),
+        "last_source": entry.last_source,
     }
 
 
@@ -341,14 +374,16 @@ def _validate_unique_nfc_tag(
     task: TaskDefinition,
     tasks: list[TaskDefinition],
 ) -> None:
-    if not task.nfc_tag_id:
+    if not task.active or not task.nfc_tag_id:
         return
 
     conflicting_task = next(
         (
             existing
             for existing in tasks
-            if existing.id != task.id and existing.nfc_tag_id == task.nfc_tag_id
+            if existing.id != task.id
+            and existing.active
+            and existing.nfc_tag_id == task.nfc_tag_id
         ),
         None,
     )
@@ -360,12 +395,36 @@ def _validate_unique_nfc_tag(
         )
 
 
-async def _load_tag_mappings(store: TaskStore) -> list[NfcTagMapping]:
-    raw_nfc = await store.async_load_nfc()
+async def _async_list_ha_users(hass: HomeAssistant) -> list[HaUserSummary]:
+    users = await hass.auth.async_get_users()
     return [
-        nfc_tag_mapping_from_dict(raw_mapping)
-        for raw_mapping in raw_nfc.get("tag_mappings", [])
+        HaUserSummary(
+            id=user.id,
+            name=user.name,
+            is_active=user.is_active,
+            is_admin=user.is_admin,
+            system_generated=user.system_generated,
+        )
+        for user in sorted(users, key=lambda current: (current.name.casefold(), current.id))
     ]
+
+
+async def _persist_profiles_snapshot(
+    store: TaskStore,
+    identity_service,
+) -> None:
+    await store.async_save_profiles(
+        {
+            "profiles": [
+                household_profile_to_dict(profile)
+                for profile in identity_service.list_profiles()
+            ],
+            "mappings": [
+                user_profile_mapping_to_dict(mapping)
+                for mapping in identity_service.list_mappings()
+            ],
+        }
+    )
 
 
 def _derive_task_tag_mappings(
@@ -379,7 +438,7 @@ def _derive_task_tag_mappings(
             created_at=task.updated_at,
         )
         for task in tasks
-        if task.nfc_tag_id
+        if task.active and task.nfc_tag_id
     ]
 
 
@@ -410,9 +469,15 @@ def _rebuild_nfc_service(
     *,
     tasks: list[TaskDefinition],
     tag_mappings: list[NfcTagMapping],
+    discovery_entries: list[NfcDiscoveryEntry] | None = None,
 ) -> None:
     runtime_data["nfc"] = NfcEventService(
         tag_mappings=tag_mappings,
+        discovery_entries=(
+            discovery_entries
+            if discovery_entries is not None
+            else runtime_data["nfc"].get_discoveries()
+        ),
         tasks=tasks,
         pending_attempts=_filter_pending_confirmations(runtime_data, tasks),
         task_domain_service=runtime_data["task_domain"],
@@ -421,37 +486,9 @@ def _rebuild_nfc_service(
 
 async def _sync_task_nfc_mappings(
     store: TaskStore,
-    task: TaskDefinition,
+    tasks: list[TaskDefinition],
 ) -> list[NfcTagMapping]:
-    existing_mappings = await _load_tag_mappings(store)
-    updated_mappings = [
-        mapping for mapping in existing_mappings if mapping.task_id != task.id
-    ]
-
-    if task.nfc_tag_id:
-        updated_mappings = [
-            mapping
-            for mapping in updated_mappings
-            if mapping.tag_id != task.nfc_tag_id
-        ]
-        existing_mapping = next(
-            (
-                mapping
-                for mapping in existing_mappings
-                if mapping.task_id == task.id and mapping.tag_id == task.nfc_tag_id
-            ),
-            None,
-        )
-        updated_mappings.append(
-            existing_mapping
-            if existing_mapping is not None
-            else NfcTagMapping(
-                tag_id=task.nfc_tag_id,
-                task_id=task.id,
-                label=task.title,
-                created_at=task.updated_at,
-            )
-        )
+    updated_mappings = _derive_task_tag_mappings(tasks)
 
     await store.async_save_nfc(
         {
@@ -528,6 +565,51 @@ def async_register_websocket_api(hass: HomeAssistant) -> None:
         )
 
     @websocket_api.websocket_command(
+        {vol.Required("type"): f"{DOMAIN}/profile_mappings"}
+    )
+    @websocket_api.require_admin
+    @websocket_api.async_response
+    async def ws_profile_mappings(
+        hass: HomeAssistant,
+        connection: websocket_api.ActiveConnection,
+        msg: dict[str, Any],
+    ) -> None:
+        runtime_data = _get_runtime_data(connection, msg)
+        if runtime_data is None:
+            return
+
+        mappings = sorted(
+            runtime_data["identity"].list_mappings(),
+            key=lambda mapping: mapping.ha_user_id,
+        )
+        connection.send_result(
+            msg["id"],
+            [user_profile_mapping_to_dict(mapping) for mapping in mappings],
+        )
+
+    @websocket_api.websocket_command(
+        {vol.Required("type"): f"{DOMAIN}/ha_users"}
+    )
+    @websocket_api.require_admin
+    @websocket_api.async_response
+    async def ws_ha_users(
+        hass: HomeAssistant,
+        connection: websocket_api.ActiveConnection,
+        msg: dict[str, Any],
+    ) -> None:
+        runtime_data = _get_runtime_data(connection, msg)
+        if runtime_data is None:
+            return
+
+        connection.send_result(
+            msg["id"],
+            [
+                ha_user_summary_to_dict(ha_user)
+                for ha_user in await _async_list_ha_users(hass)
+            ],
+        )
+
+    @websocket_api.websocket_command(
         {vol.Required("type"): f"{DOMAIN}/current_profile"}
     )
     @websocket_api.async_response
@@ -566,6 +648,60 @@ def async_register_websocket_api(hass: HomeAssistant) -> None:
                 "profile_id": profile.id,
                 "display_name": profile.display_name,
                 "avatar_url": profile.avatar_url,
+            },
+        )
+
+    @websocket_api.websocket_command(
+        {
+            vol.Required("type"): f"{DOMAIN}/import_ha_user",
+            vol.Required("ha_user_id"): cv.string,
+        }
+    )
+    @websocket_api.require_admin
+    @websocket_api.async_response
+    async def ws_import_ha_user(
+        hass: HomeAssistant,
+        connection: websocket_api.ActiveConnection,
+        msg: dict[str, Any],
+    ) -> None:
+        runtime_data = _get_runtime_data(connection, msg)
+        if runtime_data is None:
+            return
+
+        identity_service = runtime_data["identity"]
+        ha_user = next(
+            (
+                candidate
+                for candidate in await _async_list_ha_users(hass)
+                if candidate.id == msg["ha_user_id"]
+            ),
+            None,
+        )
+        if ha_user is None:
+            connection.send_error(
+                msg["id"],
+                "ha_user_not_found",
+                f"Home Assistant user {msg['ha_user_id']!r} was not found.",
+            )
+            return
+
+        if not ha_user.is_active or ha_user.system_generated:
+            connection.send_error(
+                msg["id"],
+                "invalid_ha_user",
+                "Only active, non-system Home Assistant users can be imported.",
+            )
+            return
+
+        profile, mapping, created = identity_service.ensure_profile_for_ha_user(ha_user)
+        await _persist_profiles_snapshot(runtime_data["store"], identity_service)
+        connection.send_result(
+            msg["id"],
+            {
+                "created": created,
+                "ha_user": ha_user_summary_to_dict(ha_user),
+                "profile": household_profile_to_dict(profile),
+                "mapping": user_profile_mapping_to_dict(mapping),
             },
         )
 
@@ -637,6 +773,7 @@ def async_register_websocket_api(hass: HomeAssistant) -> None:
             vol.Required("task"): dict,
         }
     )
+    @websocket_api.require_admin
     @websocket_api.async_response
     async def ws_save_task(
         hass: HomeAssistant,
@@ -677,14 +814,142 @@ def async_register_websocket_api(hass: HomeAssistant) -> None:
                 }
             )
 
-            await _sync_task_nfc_mappings(store, task)
+            updated_tag_mappings = await _sync_task_nfc_mappings(store, stored_tasks)
             _rebuild_nfc_service(
                 runtime_data,
                 tasks=stored_tasks,
-                tag_mappings=_derive_task_tag_mappings(stored_tasks),
+                tag_mappings=updated_tag_mappings,
+            )
+
+            await store.async_save_nfc(
+                {
+                    "discovery_entries": [
+                        nfc_discovery_entry_to_dict(entry)
+                        for entry in runtime_data["nfc"].get_discoveries()
+                    ]
+                }
             )
 
         connection.send_result(msg["id"], task_definition_to_dict(task))
+
+    @websocket_api.websocket_command(
+        {vol.Required("type"): f"{DOMAIN}/unmapped_nfc_tags"}
+    )
+    @websocket_api.require_admin
+    @websocket_api.async_response
+    async def ws_unmapped_nfc_tags(
+        hass: HomeAssistant,
+        connection: websocket_api.ActiveConnection,
+        msg: dict[str, Any],
+    ) -> None:
+        runtime_data = _get_runtime_data(connection, msg)
+        if runtime_data is None:
+            return
+
+        discoveries = runtime_data["nfc"].list_unmapped_discoveries()
+        connection.send_result(
+            msg["id"],
+            [nfc_discovery_entry_to_dict(entry) for entry in discoveries],
+        )
+
+    @websocket_api.websocket_command(
+        {
+            vol.Required("type"): f"{DOMAIN}/link_nfc_tag",
+            vol.Required("tag_id"): cv.string,
+            vol.Required("task_id"): cv.string,
+            vol.Optional("label"): cv.string,
+        }
+    )
+    @websocket_api.require_admin
+    @websocket_api.async_response
+    async def ws_link_nfc_tag(
+        hass: HomeAssistant,
+        connection: websocket_api.ActiveConnection,
+        msg: dict[str, Any],
+    ) -> None:
+        runtime_data = _get_runtime_data(connection, msg)
+        if runtime_data is None:
+            return
+
+        store: TaskStore = runtime_data["store"]
+
+        async with runtime_data["task_save_lock"]:
+            tasks = await _load_tasks(store)
+            task = next(
+                (candidate for candidate in tasks if candidate.id == msg["task_id"]),
+                None,
+            )
+            if task is None:
+                connection.send_error(
+                    msg["id"],
+                    "task_not_found",
+                    f"Task {msg['task_id']!r} was not found.",
+                )
+                return
+
+            if not task.active:
+                connection.send_error(
+                    msg["id"],
+                    "inactive_task",
+                    f"Task {task.id!r} must be active before linking an NFC tag.",
+                )
+                return
+
+            conflicting_task = next(
+                (
+                    candidate
+                    for candidate in tasks
+                    if candidate.id != task.id
+                    and candidate.active
+                    and candidate.nfc_tag_id == msg["tag_id"]
+                ),
+                None,
+            )
+            if conflicting_task is not None:
+                connection.send_error(
+                    msg["id"],
+                    "nfc_tag_conflict",
+                    f"NFC tag {msg['tag_id']!r} is already assigned to task {conflicting_task.id!r}.",
+                )
+                return
+
+            task.nfc_tag_id = msg["tag_id"]
+            task.updated_at = utc_now()
+            stored_tasks = [existing for existing in tasks if existing.id != task.id]
+            stored_tasks.append(task)
+
+            await store.async_save_tasks(
+                {
+                    "tasks": [
+                        task_definition_to_dict(existing)
+                        for existing in stored_tasks
+                    ]
+                }
+            )
+
+            updated_tag_mappings = await _sync_task_nfc_mappings(store, stored_tasks)
+            _rebuild_nfc_service(
+                runtime_data,
+                tasks=stored_tasks,
+                tag_mappings=updated_tag_mappings,
+            )
+
+            await store.async_save_nfc(
+                {
+                    "discovery_entries": [
+                        nfc_discovery_entry_to_dict(entry)
+                        for entry in runtime_data["nfc"].get_discoveries()
+                    ]
+                }
+            )
+
+            linked_mapping = next(
+                mapping
+                for mapping in updated_tag_mappings
+                if mapping.task_id == task.id and mapping.tag_id == msg["tag_id"]
+            )
+
+        connection.send_result(msg["id"], nfc_tag_mapping_to_dict(linked_mapping))
 
     @websocket_api.websocket_command(
         {
@@ -958,10 +1223,15 @@ def async_register_websocket_api(hass: HomeAssistant) -> None:
 
     websocket_api.async_register_command(hass, ws_pending_confirmations)
     websocket_api.async_register_command(hass, ws_profiles)
+    websocket_api.async_register_command(hass, ws_profile_mappings)
+    websocket_api.async_register_command(hass, ws_ha_users)
     websocket_api.async_register_command(hass, ws_current_profile)
+    websocket_api.async_register_command(hass, ws_import_ha_user)
     websocket_api.async_register_command(hass, ws_tasks)
     websocket_api.async_register_command(hass, ws_due_instances)
     websocket_api.async_register_command(hass, ws_save_task)
+    websocket_api.async_register_command(hass, ws_unmapped_nfc_tags)
+    websocket_api.async_register_command(hass, ws_link_nfc_tag)
     websocket_api.async_register_command(hass, ws_confirm_completion)
     websocket_api.async_register_command(hass, ws_complete_due_instance)
     websocket_api.async_register_command(hass, ws_analytics)

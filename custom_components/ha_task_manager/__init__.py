@@ -17,7 +17,13 @@ from .const import (
     EVENT_NFC_TAG_MAPPING_REQUESTED,
 )
 from .exceptions import TaskManagerError, UnknownNfcTagError
-from .models import AttemptOutcome, CompletionSource, NfcTagMapping, TaskDefinition
+from .models import (
+    AttemptOutcome,
+    CompletionSource,
+    HaUserSummary,
+    NfcTagMapping,
+    TaskDefinition,
+)
 from .panel import async_register_task_manager_panel
 from .services.analytics import AnalyticsService
 from .services.completion_domain import CompletionDomainService
@@ -29,9 +35,13 @@ from .websocket_api import (
     async_register_websocket_api,
     completion_attempt_to_dict,
     completion_record_from_dict,
+    household_profile_to_dict,
     household_profile_from_dict,
+    nfc_discovery_entry_from_dict,
+    nfc_discovery_entry_to_dict,
     task_definition_from_dict,
     user_profile_mapping_from_dict,
+    user_profile_mapping_to_dict,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -87,8 +97,70 @@ def _derive_tag_mappings(tasks: list[TaskDefinition]) -> list[NfcTagMapping]:
             created_at=task.updated_at,
         )
         for task in tasks
-        if task.nfc_tag_id
+        if task.active and task.nfc_tag_id
     ]
+
+
+async def _async_list_ha_users(hass: HomeAssistant) -> list[HaUserSummary]:
+    users = await hass.auth.async_get_users()
+    return [
+        HaUserSummary(
+            id=user.id,
+            name=user.name,
+            is_active=user.is_active,
+            is_admin=user.is_admin,
+            system_generated=user.system_generated,
+        )
+        for user in sorted(users, key=lambda current: (current.name.casefold(), current.id))
+    ]
+
+
+async def _async_bootstrap_profiles_if_needed(
+    hass: HomeAssistant,
+    store: TaskStore,
+    identity_service: IdentityMappingService,
+) -> None:
+    if identity_service.list_profiles() or identity_service.list_mappings():
+        return
+
+    created_mappings = False
+    for ha_user in identity_service.list_unmapped_ha_users(
+        await _async_list_ha_users(hass)
+    ):
+        _profile, _mapping, created = identity_service.ensure_profile_for_ha_user(
+            ha_user
+        )
+        created_mappings = created_mappings or created
+
+    if not created_mappings:
+        return
+
+    await store.async_save_profiles(
+        {
+            "profiles": [
+                household_profile_to_dict(profile)
+                for profile in identity_service.list_profiles()
+            ],
+            "mappings": [
+                user_profile_mapping_to_dict(mapping)
+                for mapping in identity_service.list_mappings()
+            ],
+        }
+    )
+
+
+async def _async_persist_nfc_discoveries(
+    store: TaskStore,
+    nfc_service: NfcEventService,
+) -> None:
+    await store.async_save_nfc(
+        {
+            "discovery_entries": [
+                nfc_discovery_entry_to_dict(entry)
+                for entry in nfc_service.get_discoveries()
+            ]
+        }
+    )
 
 
 def _register_nfc_event_listener(
@@ -128,6 +200,11 @@ def _register_nfc_event_listener(
                 event_data.get("as_of"),
             )
             return
+
+        nfc_service.record_tag_discovery(tag_id, source=source.value)
+        hass.async_create_task(
+            _async_persist_nfc_discoveries(runtime_data["store"], nfc_service)
+        )
 
         try:
             attempt = nfc_service.initiate_confirmation(
@@ -179,6 +256,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     raw_tasks = await store.async_load_tasks()
     raw_profiles = await store.async_load_profiles()
     raw_history = await store.async_load_completions()
+    raw_nfc = await store.async_load_nfc()
 
     tasks = [
         task_definition_from_dict(raw_task)
@@ -193,6 +271,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         for raw_mapping in raw_profiles.get("mappings", [])
     ]
     tag_mappings = _derive_tag_mappings(tasks)
+    discovery_entries = [
+        nfc_discovery_entry_from_dict(raw_entry)
+        for raw_entry in raw_nfc.get("discovery_entries", [])
+    ]
     history = [
         completion_record_from_dict(raw_record) for raw_record in raw_history
     ]
@@ -201,6 +283,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         profiles=profiles,
         mappings=mappings,
     )
+    await _async_bootstrap_profiles_if_needed(
+        hass,
+        store,
+        identity_mapping_service,
+    )
     task_domain_service = TaskDomainService()
     completion_domain_service = CompletionDomainService(
         identity_mapping_service=identity_mapping_service,
@@ -208,6 +295,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     )
     nfc_event_service = NfcEventService(
         tag_mappings=tag_mappings,
+        discovery_entries=discovery_entries,
         tasks=tasks,
         task_domain_service=task_domain_service,
     )

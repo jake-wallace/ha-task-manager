@@ -1,5 +1,6 @@
 const path = require("node:path");
 const resolve = require("@rollup/plugin-node-resolve");
+const replace = require("@rollup/plugin-replace");
 const typescript = require("@rollup/plugin-typescript");
 
 module.exports = {
@@ -12,6 +13,10 @@ module.exports = {
     format: "es"
   },
   plugins: [
+    replace({
+      "process.env.NODE_ENV": JSON.stringify("production"),
+      preventAssignment: true
+    }),
     resolve.nodeResolve(),
     typescript({
       tsconfig: path.resolve(__dirname, "tsconfig.json")

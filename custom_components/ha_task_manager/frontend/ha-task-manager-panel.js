@@ -118,6 +118,34 @@ function fetchCurrentProfile(hass) {
         type: `${DOMAIN}/current_profile`
     });
 }
+function fetchProfileMappings(hass) {
+    return callApi(hass, {
+        type: `${DOMAIN}/profile_mappings`
+    });
+}
+function fetchHaUsers(hass) {
+    return callApi(hass, {
+        type: `${DOMAIN}/ha_users`
+    });
+}
+function fetchUnmappedNfcTags(hass) {
+    return callApi(hass, {
+        type: `${DOMAIN}/unmapped_nfc_tags`
+    });
+}
+function importHaUser(hass, options) {
+    return callApi(hass, {
+        type: `${DOMAIN}/import_ha_user`,
+        ha_user_id: options.haUserId
+    });
+}
+function linkNfcTag(hass, options) {
+    return callApi(hass, {
+        type: `${DOMAIN}/link_nfc_tag`,
+        tag_id: options.tagId,
+        task_id: options.taskId
+    });
+}
 function fetchTasks(hass) {
     return callApi(hass, {
         type: `${DOMAIN}/tasks`
@@ -4683,9 +4711,6 @@ var encodeBase64 = (function () {
         };
     }
     return function (str) {
-        if (process.env.NODE_ENV !== 'production') {
-            logError('Base64 isn\'t natively supported in the current environment.');
-        }
         return null;
     };
 })();
@@ -6848,15 +6873,9 @@ var Element = (function () {
     };
     Element.prototype._attachComponent = function (componentEl) {
         if (componentEl.__zr && !componentEl.__hostTarget) {
-            if (process.env.NODE_ENV !== 'production') {
-                throw new Error('Text element has been added to zrender.');
-            }
             return;
         }
         if (componentEl === this) {
-            if (process.env.NODE_ENV !== 'production') {
-                throw new Error('Recursive component attachment.');
-            }
             return;
         }
         var zr = this.__zr;
@@ -6902,11 +6921,6 @@ var Element = (function () {
         }
         if (previousTextContent && previousTextContent !== textEl) {
             this.removeTextContent();
-        }
-        if (process.env.NODE_ENV !== 'production') {
-            if (textEl.__zr && !textEl.__hostTarget) {
-                throw new Error('Text element has been added to zrender.');
-            }
         }
         textEl.innerTransformable = new Transformable();
         this._attachComponent(textEl);
@@ -7026,15 +7040,6 @@ var Element = (function () {
     };
     Element.prototype.animate = function (key, loop, allowDiscreteAnimation) {
         var target = key ? this[key] : this;
-        if (process.env.NODE_ENV !== 'production') {
-            if (!target) {
-                logError('Property "'
-                    + key
-                    + '" is not existed in element '
-                    + this.id);
-                return;
-            }
-        }
         var animator = new Animator(target, loop, allowDiscreteAnimation);
         key && (animator.targetName = key);
         this.addAnimator(animator, key);
@@ -7108,19 +7113,9 @@ var Element = (function () {
                                 elProto.ignoreClip =
                                     elProto.__inHover = false;
         elProto.__dirty = REDRAW_BIT;
-        var logs = {};
-        function logDeprecatedError(key, xKey, yKey) {
-            if (!logs[key + xKey + yKey]) {
-                console.warn("DEPRECATED: '" + key + "' has been deprecated. use '" + xKey + "', '" + yKey + "' instead");
-                logs[key + xKey + yKey] = true;
-            }
-        }
         function createLegacyProperty(key, privateKey, xKey, yKey) {
             Object.defineProperty(elProto, key, {
                 get: function () {
-                    if (process.env.NODE_ENV !== 'production') {
-                        logDeprecatedError(key, xKey, yKey);
-                    }
                     if (!this[privateKey]) {
                         var pos = this[privateKey] = [];
                         enhanceArray(this, pos);
@@ -7128,9 +7123,6 @@ var Element = (function () {
                     return this[privateKey];
                 },
                 set: function (pos) {
-                    if (process.env.NODE_ENV !== 'production') {
-                        logDeprecatedError(key, xKey, yKey);
-                    }
                     this[xKey] = pos[0];
                     this[yKey] = pos[1];
                     this[privateKey] = pos;
@@ -7409,11 +7401,6 @@ var Group$3 = (function (_super) {
                 this._children.push(child);
                 this._doAdd(child);
             }
-            if (process.env.NODE_ENV !== 'production') {
-                if (child.__hostTarget) {
-                    throw 'This elemenet has been used as an attachment';
-                }
-            }
         }
         return this;
     };
@@ -7597,11 +7584,6 @@ var ZRender = (function () {
         var rendererType = opts.renderer || 'canvas';
         if (!painterCtors[rendererType]) {
             rendererType = keys(painterCtors)[0];
-        }
-        if (process.env.NODE_ENV !== 'production') {
-            if (!painterCtors[rendererType]) {
-                throw new Error("Renderer '" + rendererType + "' is not imported. Please import it first.");
-            }
         }
         opts.useDirtyRect = opts.useDirtyRect == null
             ? false
@@ -8356,88 +8338,17 @@ function getLeastCommonMultiple(a, b) {
 }
 
 var ECHARTS_PREFIX = '[ECharts] ';
-var storedLogs = {};
 var hasConsole = typeof console !== 'undefined'
 // eslint-disable-next-line
 && console.warn && console.log;
 function outputLog(type, str, onlyOnce) {
   if (hasConsole) {
-    if (onlyOnce) {
-      if (storedLogs[str]) {
-        return;
-      }
-      storedLogs[str] = true;
-    }
     // eslint-disable-next-line
     console[type](ECHARTS_PREFIX + str);
   }
 }
-function log(str, onlyOnce) {
-  outputLog('log', str, onlyOnce);
-}
-function warn(str, onlyOnce) {
-  outputLog('warn', str, onlyOnce);
-}
 function error(str, onlyOnce) {
-  outputLog('error', str, onlyOnce);
-}
-function deprecateLog(str) {
-  if (process.env.NODE_ENV !== 'production') {
-    // Not display duplicate message.
-    outputLog('warn', 'DEPRECATED: ' + str, true);
-  }
-}
-function deprecateReplaceLog(oldOpt, newOpt, scope) {
-  if (process.env.NODE_ENV !== 'production') {
-    deprecateLog((scope ? "[" + scope + "]" : '') + (oldOpt + " is deprecated; use " + newOpt + " instead."));
-  }
-}
-/**
- * If in __DEV__ environment, get console printable message for users hint.
- * Parameters are separated by ' '.
- * @usage
- * makePrintable('This is an error on', someVar, someObj);
- *
- * @param hintInfo anything about the current execution context to hint users.
- * @throws Error
- */
-function makePrintable() {
-  var hintInfo = [];
-  for (var _i = 0; _i < arguments.length; _i++) {
-    hintInfo[_i] = arguments[_i];
-  }
-  var msg = '';
-  if (process.env.NODE_ENV !== 'production') {
-    // Fuzzy stringify for print.
-    // This code only exist in dev environment.
-    var makePrintableStringIfPossible_1 = function (val) {
-      return val === void 0 ? 'undefined' : val === Infinity ? 'Infinity' : val === -Infinity ? '-Infinity' : eqNaN(val) ? 'NaN' : val instanceof Date ? 'Date(' + val.toISOString() + ')' : isFunction(val) ? 'function () { ... }' : isRegExp(val) ? val + '' : null;
-    };
-    msg = map$1(hintInfo, function (arg) {
-      if (isString(arg)) {
-        // Print without quotation mark for some statement.
-        return arg;
-      } else {
-        var printableStr = makePrintableStringIfPossible_1(arg);
-        if (printableStr != null) {
-          return printableStr;
-        } else if (typeof JSON !== 'undefined' && JSON.stringify) {
-          try {
-            return JSON.stringify(arg, function (n, val) {
-              var printableStr = makePrintableStringIfPossible_1(val);
-              return printableStr == null ? val : printableStr;
-            });
-            // In most cases the info object is small, so do not line break.
-          } catch (err) {
-            return '?';
-          }
-        } else {
-          return '?';
-        }
-      }
-    }).join(' ');
-  }
-  return msg;
+  outputLog('error', str);
 }
 /**
  * @throws Error
@@ -8556,16 +8467,6 @@ function mappingToExists(existings, newCmptOptions, mode) {
     if (!isObject$3(cmptOption)) {
       newCmptOptions[index] = null;
       return;
-    }
-    if (process.env.NODE_ENV !== 'production') {
-      // There is some legacy case that name is set as `false`.
-      // But should work normally rather than throw error.
-      if (cmptOption.id != null && !isValidIdOrName(cmptOption.id)) {
-        warnInvalidateIdOrName(cmptOption.id);
-      }
-      if (cmptOption.name != null && !isValidIdOrName(cmptOption.name)) {
-        warnInvalidateIdOrName(cmptOption.name);
-      }
     }
   });
   var result = prepareResult(existings, existingIdIdxMap, mode);
@@ -8767,11 +8668,6 @@ function keyExistAndEqual(attr, obj1, obj2) {
  * @return return null if not exist.
  */
 function makeComparableKey(val) {
-  if (process.env.NODE_ENV !== 'production') {
-    if (val == null) {
-      throw new Error();
-    }
-  }
   return convertOptionIdName(val, '');
 }
 function convertOptionIdName(idOrName, defaultValue) {
@@ -8779,14 +8675,6 @@ function convertOptionIdName(idOrName, defaultValue) {
     return defaultValue;
   }
   return isString(idOrName) ? idOrName : isNumber(idOrName) || isStringSafe(idOrName) ? idOrName + '' : defaultValue;
-}
-function warnInvalidateIdOrName(idOrName) {
-  if (process.env.NODE_ENV !== 'production') {
-    warn('`' + idOrName + '` is invalid id or name. Must be a string or number.');
-  }
-}
-function isValidIdOrName(idOrName) {
-  return isStringSafe(idOrName) || isNumeric(idOrName);
 }
 function isNameSpecified(componentModel) {
   var name = componentModel.name;
@@ -9004,11 +8892,6 @@ function queryReferringComponents(ecModel, mainType, userOption, opt) {
       result.models = [];
       return result;
     } else {
-      // Do not throw; consider if some component previously does not use this method,
-      // and start to use it, need to be fault-tolerant for backward compatibility.
-      if (process.env.NODE_ENV !== 'production') {
-        error('`"none"` or `false` is not a valid value on index option.');
-      }
       indexOption = -1; // Can not query by index but may still query by id/name if specified.
     }
   }
@@ -9018,9 +8901,6 @@ function queryReferringComponents(ecModel, mainType, userOption, opt) {
     if (opt.enableAll) {
       indexOption = idOption = nameOption = null;
     } else {
-      if (process.env.NODE_ENV !== 'production') {
-        error('`"all"` is not a valid value on index option.');
-      }
       indexOption = -1;
     }
   }
@@ -9197,13 +9077,6 @@ function isExtendedClass(clz) {
 function enableClassExtend(rootClz, mandatoryMethods) {
   rootClz.$constructor = rootClz; // FIXME: not necessary?
   rootClz.extend = function (proto) {
-    if (process.env.NODE_ENV !== 'production') {
-      each$f(mandatoryMethods, function (method) {
-        if (!proto[method]) {
-          console.warn('Method `' + method + '` should be implemented' + (proto.type ? ' in ' + proto.type : '') + '.');
-        }
-      });
-    }
     var superClass = this;
     var ExtendedClass;
     if (isESClass(superClass)) {
@@ -9274,9 +9147,6 @@ var classBase = Math.round(Math.random() * 10);
 function enableClassCheck(target) {
   var classAttr = ['__\0is_clz', classBase++].join('_');
   target.prototype[classAttr] = true;
-  if (process.env.NODE_ENV !== 'production') {
-    assert(!target.isInstance, 'The method "is" can not be defined.');
-  }
   target.isInstance = function (obj) {
     return !!(obj && obj[classAttr]);
   };
@@ -9329,11 +9199,6 @@ function enableClassManagement(target) {
       clz.prototype.type = componentFullType;
       var componentTypeInfo = parseClassType(componentFullType);
       if (!componentTypeInfo.sub) {
-        if (process.env.NODE_ENV !== 'production') {
-          if (storage[componentTypeInfo.main]) {
-            console.warn(componentTypeInfo.main + ' exists.');
-          }
-        }
         storage[componentTypeInfo.main] = clz;
       } else if (componentTypeInfo.sub !== IS_CONTAINER) {
         var container = makeContainer(componentTypeInfo);
@@ -12434,9 +12299,6 @@ var ZRText = (function (_super) {
         this._defaultStyle = defaultTextStyle || DEFAULT_RICH_TEXT_COLOR;
     };
     ZRText.prototype.setTextContent = function (textContent) {
-        if (process.env.NODE_ENV !== 'production') {
-            throw new Error('Can\'t attach text on another text');
-        }
     };
     ZRText.prototype._mergeStyle = function (targetStyle, sourceStyle) {
         if (!sourceStyle) {
@@ -13217,9 +13079,6 @@ function blurSeriesFromHighlightPayload(seriesModel, payload, api) {
   var seriesIndex = seriesModel.seriesIndex;
   var data = seriesModel.getData(payload.dataType);
   if (!data) {
-    if (process.env.NODE_ENV !== 'production') {
-      error("Unknown dataType " + payload.dataType);
-    }
     return;
   }
   var dataIndex = queryDataIndex(data, payload);
@@ -13268,9 +13127,6 @@ function findComponentHighDownDispatchers(componentMainType, componentIndex, nam
   // So we do not use `blurScope` in component.
   var focusSelf;
   for (var i = 0; i < dispatchers.length; i++) {
-    if (process.env.NODE_ENV !== 'production' && !isHighDownDispatcher(dispatchers[i])) {
-      error('param should be highDownDispatcher');
-    }
     if (getECData(dispatchers[i]).focus === 'self') {
       focusSelf = true;
       break;
@@ -13282,9 +13138,6 @@ function findComponentHighDownDispatchers(componentMainType, componentIndex, nam
   };
 }
 function handleGlobalMouseOverForHighDown(dispatcher, e, api) {
-  if (process.env.NODE_ENV !== 'production' && !isHighDownDispatcher(dispatcher)) {
-    error('param should be highDownDispatcher');
-  }
   var ecData = getECData(dispatcher);
   var _a = findComponentHighDownDispatchers(ecData.componentMainType, ecData.componentIndex, ecData.componentHighDownName, api),
     dispatchers = _a.dispatchers,
@@ -13312,9 +13165,6 @@ function handleGlobalMouseOverForHighDown(dispatcher, e, api) {
   }
 }
 function handleGlobalMouseOutForHighDown(dispatcher, e, api) {
-  if (process.env.NODE_ENV !== 'production' && !isHighDownDispatcher(dispatcher)) {
-    error('param should be highDownDispatcher');
-  }
   allLeaveBlur(api);
   var ecData = getECData(dispatcher);
   var dispatchers = findComponentHighDownDispatchers(ecData.componentMainType, ecData.componentIndex, ecData.componentHighDownName, api).dispatchers;
@@ -15584,9 +15434,6 @@ function expandOrShrinkRect(rect, delta, shrinkOrExpand, noNegative, minSize // 
   } else if (isNumber(delta)) {
     _tmpExpandRectDelta[0] = _tmpExpandRectDelta[1] = _tmpExpandRectDelta[2] = _tmpExpandRectDelta[3] = delta;
   } else {
-    if (process.env.NODE_ENV !== 'production') {
-      assert(delta.length === 4);
-    }
     _tmpExpandRectDelta[0] = delta[0];
     _tmpExpandRectDelta[1] = delta[1];
     _tmpExpandRectDelta[2] = delta[2];
@@ -16176,11 +16023,6 @@ textStyleModel, globalTextStyle, plainTextModel, richInheritPlainLabel, opt, isN
   var strokeColor = textStyleModel.getShallow('textBorderColor');
   var opacity = retrieve2(textStyleModel.getShallow('opacity'), globalTextStyle.opacity);
   if (fillColor === 'inherit' || fillColor === 'auto') {
-    if (process.env.NODE_ENV !== 'production') {
-      if (fillColor === 'auto') {
-        deprecateReplaceLog('color: \'auto\'', 'color: \'inherit\'');
-      }
-    }
     if (inheritColor) {
       fillColor = inheritColor;
     } else {
@@ -16188,11 +16030,6 @@ textStyleModel, globalTextStyle, plainTextModel, richInheritPlainLabel, opt, isN
     }
   }
   if (strokeColor === 'inherit' || strokeColor === 'auto') {
-    if (process.env.NODE_ENV !== 'production') {
-      if (strokeColor === 'auto') {
-        deprecateReplaceLog('color: \'auto\'', 'color: \'inherit\'');
-      }
-    }
     if (inheritColor) {
       strokeColor = inheritColor;
     } else {
@@ -16280,19 +16117,9 @@ textStyleModel, globalTextStyle, plainTextModel, richInheritPlainLabel, opt, isN
       textStyle.borderDash = borderType;
     }
     if ((textStyle.backgroundColor === 'auto' || textStyle.backgroundColor === 'inherit') && inheritColor) {
-      if (process.env.NODE_ENV !== 'production') {
-        if (textStyle.backgroundColor === 'auto') {
-          deprecateReplaceLog('backgroundColor: \'auto\'', 'backgroundColor: \'inherit\'');
-        }
-      }
       textStyle.backgroundColor = inheritColor;
     }
     if ((textStyle.borderColor === 'auto' || textStyle.borderColor === 'inherit') && inheritColor) {
-      if (process.env.NODE_ENV !== 'production') {
-        if (textStyle.borderColor === 'auto') {
-          deprecateReplaceLog('borderColor: \'auto\'', 'borderColor: \'inherit\'');
-        }
-      }
       textStyle.borderColor = inheritColor;
     }
   }
@@ -16617,9 +16444,6 @@ function enableTopologicalTravel(entity, dependencyGetter) {
     }
     each$f(targetNameSet, function () {
       var errMsg = '';
-      if (process.env.NODE_ENV !== 'production') {
-        errMsg = makePrintable('Circular dependency may exists: ', targetNameSet, targetNameList, fullNameList);
-      }
       throw new Error(errMsg);
     });
     function removeEdge(succComponentType) {
@@ -17592,23 +17416,13 @@ var CoordinateSystemManager = /** @class */function () {
    * If the coordinate system do not lay out based on `series.data`, `update` is not needed.
    */
   CoordinateSystemManager.prototype.create = function (ecModel, api) {
-    this._nonSeriesBoxMasterList = dealCreate(nonSeriesBoxCoordSysCreators, true);
-    this._normalMasterList = dealCreate(normalCoordSysCreators, false);
+    this._nonSeriesBoxMasterList = dealCreate(nonSeriesBoxCoordSysCreators);
+    this._normalMasterList = dealCreate(normalCoordSysCreators);
     function dealCreate(creatorMap, canBeNonSeriesBox) {
       var coordinateSystems = [];
       each$f(creatorMap, function (creator, type) {
         var list = creator.create(ecModel, api);
         coordinateSystems = coordinateSystems.concat(list || []);
-        if (process.env.NODE_ENV !== 'production') {
-          if (canBeNonSeriesBox) {
-            // Disallow `update` is a brutal way to ensure `_nonSeriesBoxMasterList`s are ready to
-            // serve after `create`. But if `update` has to be involved in `_nonSeriesBoxMasterList`
-            // for some future case, more complicated mechanisms need to be introduced.
-            each$f(list, function (master) {
-              return assert(!master.update);
-            });
-          }
-        }
       });
       return coordinateSystems;
     }
@@ -17654,9 +17468,6 @@ var BoxCoordinateSystemCoordFrom = {
  * @see_also `injectCoordSysByOption`
  */
 function registerLayOutOnCoordSysUsage(opt) {
-  if (process.env.NODE_ENV !== 'production') {
-    assert(!coordSysUseMap.get(opt.fullType));
-  }
   coordSysUseMap.set(opt.fullType, {
     getCoord2: undefined
   }).getCoord2 = opt.getCoord2;
@@ -17702,7 +17513,6 @@ model, printError) {
   // For backward compat, still not use `true` in model.get.
   var coordSysType = model.getShallow('coordinateSystem');
   var coordSysUsageOption = model.getShallow('coordinateSystemUsage', true);
-  var isDeclaredExplicitly = coordSysUsageOption != null;
   var kind = CoordinateSystemUsageKind.none;
   if (coordSysType) {
     var isSeries = model.mainType === 'series';
@@ -17712,21 +17522,11 @@ model, printError) {
     if (coordSysUsageOption === 'data') {
       kind = CoordinateSystemUsageKind.dataCoordSys;
       if (!isSeries) {
-        if (process.env.NODE_ENV !== 'production') {
-          if (isDeclaredExplicitly && printError) {
-            error('coordinateSystemUsage "data" is not supported in non-series components.');
-          }
-        }
         kind = CoordinateSystemUsageKind.none;
       }
     } else if (coordSysUsageOption === 'box') {
       kind = CoordinateSystemUsageKind.boxCoordSys;
       if (!isSeries && !canBeNonSeriesBoxCoordSys(coordSysType)) {
-        if (process.env.NODE_ENV !== 'production') {
-          if (isDeclaredExplicitly && printError) {
-            error("coordinateSystem \"" + coordSysType + "\" cannot be used" + (" as coordinateSystemUsage \"box\" for \"" + model.type + "\" yet."));
-          }
-        }
         kind = CoordinateSystemUsageKind.none;
       }
     }
@@ -17787,12 +17587,9 @@ function injectCoordSysByOption(opt) {
   var targetModel = opt.targetModel,
     coordSysType = opt.coordSysType,
     coordSysProvider = opt.coordSysProvider,
-    isDefaultDataCoordSys = opt.isDefaultDataCoordSys,
-    allowNotFound = opt.allowNotFound;
-  if (process.env.NODE_ENV !== 'production') {
-    assert(!!coordSysType);
-  }
-  var _a = decideCoordSysUsageKind(targetModel, true),
+    isDefaultDataCoordSys = opt.isDefaultDataCoordSys;
+    opt.allowNotFound;
+  var _a = decideCoordSysUsageKind(targetModel),
     kind = _a.kind,
     declaredType = _a.coordSysType;
   if (isDefaultDataCoordSys && kind !== CoordinateSystemUsageKind.dataCoordSys) {
@@ -17806,17 +17603,9 @@ function injectCoordSysByOption(opt) {
   }
   var coordSys = coordSysProvider(coordSysType, targetModel);
   if (!coordSys) {
-    if (process.env.NODE_ENV !== 'production') {
-      if (!allowNotFound) {
-        error(coordSysType + " cannot be found for" + (" " + targetModel.type + " (index: " + targetModel.componentIndex + ")."));
-      }
-    }
     return false;
   }
   if (kind === CoordinateSystemUsageKind.dataCoordSys) {
-    if (process.env.NODE_ENV !== 'production') {
-      assert(targetModel.mainType === 'series');
-    }
     targetModel.coordinateSystem = coordSys;
   } else {
     // kind === 'boxCoordSys'
@@ -18144,11 +17933,7 @@ function createBoxLayoutReference(model, api, opt) {
       layoutRefType = BoxLayoutReferenceType.point;
       boxCoordFrom = from;
       refPoint = boxCoordSys.dataToPoint(coord);
-    } else {
-      if (process.env.NODE_ENV !== 'production') {
-        error(model.type + "[" + model.componentIndex + "]" + (" layout based on " + boxCoordSys.type + " is not supported."));
-      }
-    }
+    } else ;
   }
   if (layoutRefType == null) {
     layoutRefType = BoxLayoutReferenceType.rect;
@@ -19084,11 +18869,6 @@ function concatInternalOptions(ecModel, mainType, newCmptOptionList) {
   if (!internalOptions) {
     return newCmptOptionList;
   }
-  if (process.env.NODE_ENV !== 'production') {
-    for (var i = 0; i < internalOptions.length; i++) {
-      assert(isComponentIdInternal(internalOptions[i]));
-    }
-  }
   return newCmptOptionList.concat(internalOptions);
 }
 
@@ -19161,72 +18941,6 @@ var assertSeriesInitialized;
 var initBase;
 var OPTION_INNER_KEY = '\0_ec_inner';
 var OPTION_INNER_VALUE = 1;
-var BUITIN_COMPONENTS_MAP = {
-  grid: 'GridComponent',
-  polar: 'PolarComponent',
-  geo: 'GeoComponent',
-  singleAxis: 'SingleAxisComponent',
-  parallel: 'ParallelComponent',
-  calendar: 'CalendarComponent',
-  matrix: 'MatrixComponent',
-  graphic: 'GraphicComponent',
-  toolbox: 'ToolboxComponent',
-  tooltip: 'TooltipComponent',
-  axisPointer: 'AxisPointerComponent',
-  brush: 'BrushComponent',
-  title: 'TitleComponent',
-  timeline: 'TimelineComponent',
-  markPoint: 'MarkPointComponent',
-  markLine: 'MarkLineComponent',
-  markArea: 'MarkAreaComponent',
-  legend: 'LegendComponent',
-  dataZoom: 'DataZoomComponent',
-  visualMap: 'VisualMapComponent',
-  // aria: 'AriaComponent',
-  // dataset: 'DatasetComponent',
-  // Dependencies
-  xAxis: 'GridComponent',
-  yAxis: 'GridComponent',
-  angleAxis: 'PolarComponent',
-  radiusAxis: 'PolarComponent'
-};
-var BUILTIN_CHARTS_MAP = {
-  line: 'LineChart',
-  bar: 'BarChart',
-  pie: 'PieChart',
-  scatter: 'ScatterChart',
-  radar: 'RadarChart',
-  map: 'MapChart',
-  tree: 'TreeChart',
-  treemap: 'TreemapChart',
-  graph: 'GraphChart',
-  chord: 'ChordChart',
-  gauge: 'GaugeChart',
-  funnel: 'FunnelChart',
-  parallel: 'ParallelChart',
-  sankey: 'SankeyChart',
-  boxplot: 'BoxplotChart',
-  candlestick: 'CandlestickChart',
-  effectScatter: 'EffectScatterChart',
-  lines: 'LinesChart',
-  heatmap: 'HeatmapChart',
-  pictorialBar: 'PictorialBarChart',
-  themeRiver: 'ThemeRiverChart',
-  sunburst: 'SunburstChart',
-  custom: 'CustomChart'
-};
-var componetsMissingLogPrinted = {};
-function checkMissingComponents(option) {
-  each$f(option, function (componentOption, mainType) {
-    if (!ComponentModel.hasClass(mainType)) {
-      var componentImportName = BUITIN_COMPONENTS_MAP[mainType];
-      if (componentImportName && !componetsMissingLogPrinted[componentImportName]) {
-        error("Component " + mainType + " is used but not imported.\nimport { " + componentImportName + " } from 'echarts/components';\necharts.use([" + componentImportName + "]);");
-        componetsMissingLogPrinted[componentImportName] = true;
-      }
-    }
-  });
-}
 var GlobalModel = /** @class */function (_super) {
   __extends(GlobalModel, _super);
   function GlobalModel() {
@@ -19240,10 +18954,6 @@ var GlobalModel = /** @class */function (_super) {
     this._optionManager = optionManager;
   };
   GlobalModel.prototype.setOption = function (option, opts, optionPreprocessorFuncs) {
-    if (process.env.NODE_ENV !== 'production') {
-      assert(option != null, 'option is null/undefined');
-      assert(option[OPTION_INNER_KEY] !== OPTION_INNER_VALUE, 'please use chart.getOption()');
-    }
     var innerOpt = normalizeSetOptionInput(opts);
     this._optionManager.setOption(option, optionPreprocessorFuncs, innerOpt);
     this._resetOption(null, innerOpt);
@@ -19263,9 +18973,6 @@ var GlobalModel = /** @class */function (_super) {
     var optionManager = this._optionManager;
     if (!type || type === 'recreate') {
       var baseOption = optionManager.mountOption(type === 'recreate');
-      if (process.env.NODE_ENV !== 'production') {
-        checkMissingComponents(baseOption);
-      }
       if (!this.option || type === 'recreate') {
         initBase(this, baseOption);
       } else {
@@ -19360,7 +19067,6 @@ var GlobalModel = /** @class */function (_super) {
       var cmptsByMainType = [];
       var cmptsCountByMainType = 0;
       var tooltipExists;
-      var tooltipWarningLogged;
       each$f(mappingResult, function (resultItem, index) {
         var componentModel = resultItem.existing;
         var newCmptOption = resultItem.newOption;
@@ -19380,29 +19086,11 @@ var GlobalModel = /** @class */function (_super) {
           var ComponentModelClass = ComponentModel.getClass(mainType, resultItem.keyInfo.subType, !isSeriesType // Give a more detailed warn later if series don't exists
           );
           if (!ComponentModelClass) {
-            if (process.env.NODE_ENV !== 'production') {
-              var subType = resultItem.keyInfo.subType;
-              var seriesImportName = BUILTIN_CHARTS_MAP[subType];
-              if (!componetsMissingLogPrinted[subType]) {
-                componetsMissingLogPrinted[subType] = true;
-                if (seriesImportName) {
-                  error("Series " + subType + " is used but not imported.\nimport { " + seriesImportName + " } from 'echarts/charts';\necharts.use([" + seriesImportName + "]);");
-                } else {
-                  error("Unknown series " + subType);
-                }
-              }
-            }
             return;
           }
           // TODO Before multiple tooltips get supported, we do this check to avoid unexpected exception.
           if (mainType === 'tooltip') {
             if (tooltipExists) {
-              if (process.env.NODE_ENV !== 'production') {
-                if (!tooltipWarningLogged) {
-                  warn('Currently only one tooltip component is allowed.');
-                  tooltipWarningLogged = true;
-                }
-              }
               return;
             }
             tooltipExists = true;
@@ -19735,13 +19423,6 @@ var GlobalModel = /** @class */function (_super) {
       ecModel._seriesIndicesMap = createHashMap(seriesIndices);
     };
     assertSeriesInitialized = function (ecModel) {
-      // Components that use _seriesIndices should depends on series component,
-      // which make sure that their initialization is after series.
-      if (process.env.NODE_ENV !== 'production') {
-        if (!ecModel._seriesIndices) {
-          throw new Error('Option should contains series.');
-        }
-      }
     };
     initBase = function (ecModel, baseOption) {
       // Using OPTION_INNER_KEY to mark that this option cannot be used outside,
@@ -19828,9 +19509,6 @@ function filterBySubType(components, condition) {
 function normalizeSetOptionInput(opts) {
   var replaceMergeMainTypeMap = createHashMap();
   opts && each$f(normalizeToArray(opts.replaceMerge), function (mainType) {
-    if (process.env.NODE_ENV !== 'production') {
-      assert(ComponentModel.hasClass(mainType), '"' + mainType + '" is not valid component main type in "replaceMerge"');
-    }
     replaceMergeMainTypeMap.set(mainType, true);
   });
   return {
@@ -20086,12 +19764,6 @@ rawOption, optionPreprocessorFuncs, isNew) {
   if (hasMedia) {
     if (isArray$1(mediaOnRoot)) {
       each$f(mediaOnRoot, function (singleMedia) {
-        if (process.env.NODE_ENV !== 'production') {
-          // Real case of wrong config.
-          if (singleMedia && !singleMedia.option && isObject$3(singleMedia.query) && isObject$3(singleMedia.query.option)) {
-            error('Illegal media option. Must be like { media: [ { query: {}, option: {} } ] }');
-          }
-        }
         if (singleMedia && singleMedia.option) {
           if (singleMedia.query) {
             mediaList.push(singleMedia);
@@ -20101,11 +19773,6 @@ rawOption, optionPreprocessorFuncs, isNew) {
           }
         }
       });
-    } else {
-      if (process.env.NODE_ENV !== 'production') {
-        // Real case of wrong config.
-        error('Illegal media option. Must be an array. Like { media: [ {...}, {...} ] }');
-      }
     }
   }
   doPreprocess(baseOption);
@@ -20180,9 +19847,6 @@ function compatEC2ItemStyle(opt) {
     var normalItemStyleOpt = itemStyleOpt.normal;
     var emphasisItemStyleOpt = itemStyleOpt.emphasis;
     if (normalItemStyleOpt && normalItemStyleOpt[styleName]) {
-      if (process.env.NODE_ENV !== 'production') {
-        deprecateReplaceLog("itemStyle.normal." + styleName, styleName);
-      }
       opt[styleName] = opt[styleName] || {};
       if (!opt[styleName].normal) {
         opt[styleName].normal = normalItemStyleOpt[styleName];
@@ -20192,9 +19856,6 @@ function compatEC2ItemStyle(opt) {
       normalItemStyleOpt[styleName] = null;
     }
     if (emphasisItemStyleOpt && emphasisItemStyleOpt[styleName]) {
-      if (process.env.NODE_ENV !== 'production') {
-        deprecateReplaceLog("itemStyle.emphasis." + styleName, "emphasis." + styleName);
-      }
       opt[styleName] = opt[styleName] || {};
       if (!opt[styleName].emphasis) {
         opt[styleName].emphasis = emphasisItemStyleOpt[styleName];
@@ -20210,10 +19871,6 @@ function convertNormalEmphasis(opt, optType, useExtend) {
     var normalOpt = opt[optType].normal;
     var emphasisOpt = opt[optType].emphasis;
     if (normalOpt) {
-      if (process.env.NODE_ENV !== 'production') {
-        // eslint-disable-next-line max-len
-        deprecateLog("'normal' hierarchy in " + optType + " has been removed since 4.0. All style properties are configured in " + optType + " directly now.");
-      }
       // Timeline controlStyle has other properties besides normal and emphasis
       if (useExtend) {
         opt[optType].normal = opt[optType].emphasis = null;
@@ -20223,9 +19880,6 @@ function convertNormalEmphasis(opt, optType, useExtend) {
       }
     }
     if (emphasisOpt) {
-      if (process.env.NODE_ENV !== 'production') {
-        deprecateLog(optType + ".emphasis has been changed to emphasis." + optType + " since 4.0");
-      }
       opt.emphasis = opt.emphasis || {};
       opt.emphasis[optType] = emphasisOpt;
       // Also compat the case user mix the style and focus together in ec3 style
@@ -20255,10 +19909,6 @@ function compatTextStyle(opt, propName) {
   var labelOptSingle = isObject$2(opt) && opt[propName];
   var textStyle = isObject$2(labelOptSingle) && labelOptSingle.textStyle;
   if (textStyle) {
-    if (process.env.NODE_ENV !== 'production') {
-      // eslint-disable-next-line max-len
-      deprecateLog("textStyle hierarchy in " + propName + " has been removed since 4.0. All textStyle properties are configured in " + propName + " directly now.");
-    }
     for (var i = 0, len = TEXT_STYLE_OPTIONS.length; i < len; i++) {
       var textPropName = TEXT_STYLE_OPTIONS[i];
       if (textStyle.hasOwnProperty(textPropName)) {
@@ -20400,23 +20050,10 @@ function globalCompatStyle(option, isTheme) {
     if (radarOpt.name && radarOpt.axisName == null) {
       radarOpt.axisName = radarOpt.name;
       delete radarOpt.name;
-      if (process.env.NODE_ENV !== 'production') {
-        deprecateLog('name property in radar component has been changed to axisName');
-      }
     }
     if (radarOpt.nameGap != null && radarOpt.axisNameGap == null) {
       radarOpt.axisNameGap = radarOpt.nameGap;
       delete radarOpt.nameGap;
-      if (process.env.NODE_ENV !== 'production') {
-        deprecateLog('nameGap property in radar component has been changed to axisNameGap');
-      }
-    }
-    if (process.env.NODE_ENV !== 'production') {
-      each$d(radarOpt.indicator, function (indicatorOpt) {
-        if (indicatorOpt.text) {
-          deprecateReplaceLog('text', 'name', 'radar.indicator');
-        }
-      });
     }
   });
   each$d(toArr(option.geo), function (geoOpt) {
@@ -20497,9 +20134,6 @@ function compatBarItemStyle(option) {
       var newName = BAR_ITEM_STYLE_MAP[i][0];
       if (itemStyle[oldName] != null) {
         itemStyle[newName] = itemStyle[oldName];
-        if (process.env.NODE_ENV !== 'production') {
-          deprecateReplaceLog(oldName, newName);
-        }
       }
     }
   }
@@ -20509,9 +20143,6 @@ function compatPieLabel(option) {
     return;
   }
   if (option.alignTo === 'edge' && option.margin != null && option.edgeDistance == null) {
-    if (process.env.NODE_ENV !== 'production') {
-      deprecateReplaceLog('label.margin', 'label.edgeDistance', 'pie');
-    }
     option.edgeDistance = option.margin;
   }
 }
@@ -20521,9 +20152,6 @@ function compatSunburstState(option) {
   }
   if (option.downplay && !option.blur) {
     option.blur = option.downplay;
-    if (process.env.NODE_ENV !== 'production') {
-      deprecateReplaceLog('downplay', 'blur', 'sunburst');
-    }
   }
 }
 function compatGraphFocus(option) {
@@ -20533,9 +20161,6 @@ function compatGraphFocus(option) {
   if (option.focusNodeAdjacency != null) {
     option.emphasis = option.emphasis || {};
     if (option.emphasis.focus == null) {
-      if (process.env.NODE_ENV !== 'production') {
-        deprecateReplaceLog('focusNodeAdjacency', 'emphasis: { focus: \'adjacency\'}', 'graph/sankey');
-      }
       option.emphasis.focus = 'adjacency';
     }
   }
@@ -20560,16 +20185,10 @@ function globalBackwardCompat(option, isTheme) {
     if (seriesType === 'line') {
       if (seriesOpt.clipOverflow != null) {
         seriesOpt.clip = seriesOpt.clipOverflow;
-        if (process.env.NODE_ENV !== 'production') {
-          deprecateReplaceLog('clipOverflow', 'clip', 'line');
-        }
       }
     } else if (seriesType === 'pie' || seriesType === 'gauge') {
       if (seriesOpt.clockWise != null) {
         seriesOpt.clockwise = seriesOpt.clockWise;
-        if (process.env.NODE_ENV !== 'production') {
-          deprecateReplaceLog('clockWise', 'clockwise');
-        }
       }
       compatPieLabel(seriesOpt.label);
       var data = seriesOpt.data;
@@ -20581,9 +20200,6 @@ function globalBackwardCompat(option, isTheme) {
       if (seriesOpt.hoverOffset != null) {
         seriesOpt.emphasis = seriesOpt.emphasis || {};
         if (seriesOpt.emphasis.scaleSize = null) {
-          if (process.env.NODE_ENV !== 'production') {
-            deprecateReplaceLog('hoverOffset', 'emphasis.scaleSize');
-          }
           seriesOpt.emphasis.scaleSize = seriesOpt.hoverOffset;
         }
       }
@@ -20609,9 +20225,6 @@ function globalBackwardCompat(option, isTheme) {
         seriesOpt.emphasis = seriesOpt.emphasis || {};
         if (!seriesOpt.emphasis.focus) {
           seriesOpt.emphasis.focus = highlightPolicy;
-          if (process.env.NODE_ENV !== 'production') {
-            deprecateReplaceLog('highlightPolicy', 'emphasis.focus', 'sunburst');
-          }
         }
       }
       compatSunburstState(seriesOpt);
@@ -20621,24 +20234,15 @@ function globalBackwardCompat(option, isTheme) {
       // TODO nodes, edges?
     } else if (seriesType === 'map') {
       if (seriesOpt.mapType && !seriesOpt.map) {
-        if (process.env.NODE_ENV !== 'production') {
-          deprecateReplaceLog('mapType', 'map', 'map');
-        }
         seriesOpt.map = seriesOpt.mapType;
       }
       if (seriesOpt.mapLocation) {
-        if (process.env.NODE_ENV !== 'production') {
-          deprecateLog('`mapLocation` is not used anymore.');
-        }
         defaults(seriesOpt, seriesOpt.mapLocation);
       }
     }
     if (seriesOpt.hoverAnimation != null) {
       seriesOpt.emphasis = seriesOpt.emphasis || {};
       if (seriesOpt.emphasis && seriesOpt.emphasis.scale == null) {
-        if (process.env.NODE_ENV !== 'production') {
-          deprecateReplaceLog('hoverAnimation', 'emphasis.scale');
-        }
         seriesOpt.emphasis.scale = seriesOpt.hoverAnimation;
       }
     }
@@ -20936,11 +20540,7 @@ dimensionsDefine) {
   } else if (sourceFormat === SOURCE_FORMAT_ORIGINAL) {
     var value0 = getDataItemValue(data[0]);
     dimensionsDetectedCount = isArray$1(value0) && value0.length || 1;
-  } else if (sourceFormat === SOURCE_FORMAT_TYPED_ARRAY) {
-    if (process.env.NODE_ENV !== 'production') {
-      assert(!!dimensionsDefine, 'dimensions must be given if data is TypedArray.');
-    }
-  }
+  } else ;
   return {
     startIndex: startIndex,
     dimensionsDefine: normalizeDimensionsOption(dimensionsDefine),
@@ -21075,21 +20675,12 @@ var DefaultDataProvider = /** @class */function () {
     this._source = source;
     var data = this._data = source.data;
     var sourceFormat = source.sourceFormat;
-    var seriesLayoutBy = source.seriesLayoutBy;
+    source.seriesLayoutBy;
     // Typed array. TODO IE10+?
     if (sourceFormat === SOURCE_FORMAT_TYPED_ARRAY) {
-      if (process.env.NODE_ENV !== 'production') {
-        if (dimSize == null) {
-          throw new Error('Typed array data must specify dimension size');
-        }
-      }
       this._offset = 0;
       this._dimSize = dimSize;
       this._data = data;
-    }
-    if (process.env.NODE_ENV !== 'production') {
-      var validator = rawSourceDataValidatorMap[getMethodMapKey(sourceFormat, seriesLayoutBy)];
-      validator && validator(data, source.dimensionsDefine);
     }
     mountMethods(this, data, source);
   }
@@ -21119,9 +20710,6 @@ var DefaultDataProvider = /** @class */function () {
       var startIndex = source.startIndex;
       var dimsDef = source.dimensionsDefine;
       var methods = providerMethods[getMethodMapKey(sourceFormat, seriesLayoutBy)];
-      if (process.env.NODE_ENV !== 'production') {
-        assert(methods, 'Invalide sourceFormat: ' + sourceFormat);
-      }
       extend(provider, methods);
       if (sourceFormat === SOURCE_FORMAT_TYPED_ARRAY) {
         provider.getItem = getItemForTypedArray;
@@ -21196,9 +20784,6 @@ var DefaultDataProvider = /** @class */function () {
       persistent: false,
       pure: true,
       appendData: function (newData) {
-        if (process.env.NODE_ENV !== 'production') {
-          assert(isTypedArray(newData), 'Added data must be TypedArray if data in initialization is TypedArray');
-        }
         this._data = newData;
       },
       // Clean self if data is already used.
@@ -21224,7 +20809,7 @@ var validateSimply = function (rawData) {
 /**
  * Only run in dev mode - hint users for debug.
  */
-var rawSourceDataValidatorMap = (_a = {}, _a[SOURCE_FORMAT_ARRAY_ROWS + '_' + SERIES_LAYOUT_BY_COLUMN] = validateSimply, _a[SOURCE_FORMAT_ARRAY_ROWS + '_' + SERIES_LAYOUT_BY_ROW] = validateSimply, _a[SOURCE_FORMAT_OBJECT_ROWS] = validateSimply, _a[SOURCE_FORMAT_KEYED_COLUMNS] = function (rawData, dimsDef) {
+(_a = {}, _a[SOURCE_FORMAT_ARRAY_ROWS + '_' + SERIES_LAYOUT_BY_COLUMN] = validateSimply, _a[SOURCE_FORMAT_ARRAY_ROWS + '_' + SERIES_LAYOUT_BY_ROW] = validateSimply, _a[SOURCE_FORMAT_OBJECT_ROWS] = validateSimply, _a[SOURCE_FORMAT_KEYED_COLUMNS] = function (rawData, dimsDef) {
   for (var i = 0; i < dimsDef.length; i++) {
     var dimName = dimsDef[i].name;
     if (dimName == null) {
@@ -21257,9 +20842,6 @@ var rawSourceItemGetterMap = (_b = {}, _b[SOURCE_FORMAT_ARRAY_ROWS + '_' + SERIE
 }, _b[SOURCE_FORMAT_ORIGINAL] = getItemSimply, _b);
 function getRawSourceItemGetter(sourceFormat, seriesLayoutBy) {
   var method = rawSourceItemGetterMap[getMethodMapKey(sourceFormat, seriesLayoutBy)];
-  if (process.env.NODE_ENV !== 'production') {
-    assert(method, 'Do not support get item on "' + sourceFormat + '", "' + seriesLayoutBy + '".');
-  }
   return method;
 }
 var countSimply = function (rawData, startIndex, dimsDef) {
@@ -21277,9 +20859,6 @@ var rawSourceDataCounterMap = (_c = {}, _c[SOURCE_FORMAT_ARRAY_ROWS + '_' + SERI
 }, _c[SOURCE_FORMAT_ORIGINAL] = countSimply, _c);
 function getRawSourceDataCounter(sourceFormat, seriesLayoutBy) {
   var method = rawSourceDataCounterMap[getMethodMapKey(sourceFormat, seriesLayoutBy)];
-  if (process.env.NODE_ENV !== 'production') {
-    assert(method, 'Do not support count on "' + sourceFormat + '", "' + seriesLayoutBy + '".');
-  }
   return method;
 }
 var getRawValueSimply = function (dataItem, dimIndex, property) {
@@ -21295,9 +20874,6 @@ var rawSourceValueGetterMap = (_d = {}, _d[SOURCE_FORMAT_ARRAY_ROWS] = getRawVal
 }, _d[SOURCE_FORMAT_TYPED_ARRAY] = getRawValueSimply, _d);
 function getRawSourceValueGetter(sourceFormat) {
   var method = rawSourceValueGetterMap[sourceFormat];
-  if (process.env.NODE_ENV !== 'production') {
-    assert(method, 'Do not support get value on "' + sourceFormat + '".');
-  }
   return method;
 }
 function getMethodMapKey(sourceFormat, seriesLayoutBy) {
@@ -21414,11 +20990,6 @@ var DataFormatMixin = /** @class */function () {
         var dimLoose = dimStr;
         if (dimLoose.charAt(0) === '[' && dimLoose.charAt(len - 1) === ']') {
           dimLoose = +dimLoose.slice(1, len - 1); // Also support: '[]' => 0
-          if (process.env.NODE_ENV !== 'production') {
-            if (isNaN(dimLoose)) {
-              error("Invalide label formatter: @" + dimStr + ", only support @[0], @[1], @[2], ...");
-            }
-          }
         }
         var val = retrieveRawValue(data, dataIndex, dimLoose);
         if (extendParams && isArray$1(extendParams.interpolatedValue)) {
@@ -21469,10 +21040,6 @@ function normalizeTooltipFormatResult(result) {
   if (isObject$3(result)) {
     if (result.type) {
       markupFragment = result;
-    } else {
-      if (process.env.NODE_ENV !== 'production') {
-        console.warn('The return type of `formatTooltip` is not supported: ' + makePrintable(result));
-      }
     }
     // else {
     //     markupText = (result as TooltipFormatResultLegacyObject).html;
@@ -21553,16 +21120,10 @@ var Task = /** @class */function () {
     this._modDataCount = modDataCount;
     var step = performArgs && performArgs.step;
     if (upTask) {
-      if (process.env.NODE_ENV !== 'production') {
-        assert(upTask._outputDueEnd != null);
-      }
       this._dueEnd = upTask._outputDueEnd;
     }
     // DataTask or overallTask
     else {
-      if (process.env.NODE_ENV !== 'production') {
-        assert(!this._progress || this._count);
-      }
       this._dueEnd = this._count ? this._count(this.context) : Infinity;
     }
     // Note: Stubs, that its host overall task let it has progress, has progress.
@@ -21584,10 +21145,6 @@ var Task = /** @class */function () {
       // If no `outputDueEnd`, assume that output data and
       // input data is the same, so use `dueIndex` as `outputDueEnd`.
       var outputDueEnd = this._settedOutputEnd != null ? this._settedOutputEnd : end;
-      if (process.env.NODE_ENV !== 'production') {
-        // ??? Can not rollback.
-        assert(outputDueEnd >= this._outputDueEnd);
-      }
       this._outputDueEnd = outputDueEnd;
     } else {
       // (1) Some overall task has no progress.
@@ -21641,9 +21198,6 @@ var Task = /** @class */function () {
    * @return The downstream task.
    */
   Task.prototype.pipe = function (downTask) {
-    if (process.env.NODE_ENV !== 'production') {
-      assert(downTask && !downTask._disposed && downTask !== this);
-    }
     // If already downstream, do not dirty downTask.
     if (this._downstream !== downTask || this._dirty) {
       this._downstream = downTask;
@@ -21859,9 +21413,6 @@ var FilterOrderComparator = /** @class */function () {
   function FilterOrderComparator(op, rval) {
     if (!isNumber(rval)) {
       var errMsg = '';
-      if (process.env.NODE_ENV !== 'production') {
-        errMsg = 'rvalue of "<", ">", "<=", ">=" can only be number in filter.';
-      }
       throwError(errMsg);
     }
     this._opFn = ORDER_COMPARISON_OP_MAP[op];
@@ -22043,12 +21594,6 @@ function createExternalSource(internalSource, externalTransform) {
   var sourceHeaderCount = internalSource.startIndex;
   var errMsg = '';
   if (internalSource.seriesLayoutBy !== SERIES_LAYOUT_BY_COLUMN) {
-    // For the logic simplicity in transformer, only 'culumn' is
-    // supported in data transform. Otherwise, the `dimensionsDefine`
-    // might be detected by 'row', which probably confuses users.
-    if (process.env.NODE_ENV !== 'production') {
-      errMsg = '`seriesLayoutBy` of upstream dataset can only be "column" in data transform.';
-    }
     throwError(errMsg);
   }
   // [MEMO]
@@ -22077,9 +21622,6 @@ function createExternalSource(internalSource, externalTransform) {
         // new name like module `completeDimensions.ts` did, but just tell users.
         var errMsg_1 = '';
         if (hasOwn(dimsByName, name)) {
-          if (process.env.NODE_ENV !== 'production') {
-            errMsg_1 = 'dimension name "' + name + '" duplicated.';
-          }
           throwError(errMsg_1);
         }
         dimsByName[name] = dimDefExt;
@@ -22131,9 +21673,6 @@ function getRawData(upstream) {
   var sourceFormat = upstream.sourceFormat;
   if (!isSupportedSourceFormat(sourceFormat)) {
     var errMsg = '';
-    if (process.env.NODE_ENV !== 'production') {
-      errMsg = '`getRawData` is not supported in source format ' + sourceFormat;
-    }
     throwError(errMsg);
   }
   return upstream.data;
@@ -22143,9 +21682,6 @@ function cloneRawData(upstream) {
   var data = upstream.data;
   if (!isSupportedSourceFormat(sourceFormat)) {
     var errMsg = '';
-    if (process.env.NODE_ENV !== 'production') {
-      errMsg = '`cloneRawData` is not supported in source format ' + sourceFormat;
-    }
     throwError(errMsg);
   }
   if (sourceFormat === SOURCE_FORMAT_ARRAY_ROWS) {
@@ -22186,16 +21722,10 @@ function registerExternalTransform(externalTransform) {
   var type = externalTransform.type;
   var errMsg = '';
   if (!type) {
-    if (process.env.NODE_ENV !== 'production') {
-      errMsg = 'Must have a `type` when `registerTransform`.';
-    }
     throwError(errMsg);
   }
   var typeParsed = type.split(':');
   if (typeParsed.length !== 2) {
-    if (process.env.NODE_ENV !== 'production') {
-      errMsg = 'Name must include namespace like "ns:regression".';
-    }
     throwError(errMsg);
   }
   // Namespace 'echarts:xxx' is official namespace, where the transforms should
@@ -22213,14 +21743,11 @@ function applyDataTransform(rawTransOption, sourceList, infoForPrint) {
   var pipeLen = pipedTransOption.length;
   var errMsg = '';
   if (!pipeLen) {
-    if (process.env.NODE_ENV !== 'production') {
-      errMsg = 'If `transform` declared, it should at least contain one transform.';
-    }
     throwError(errMsg);
   }
   for (var i = 0, len = pipeLen; i < len; i++) {
     var transOption = pipedTransOption[i];
-    sourceList = applySingleDataTransform(transOption, sourceList, infoForPrint, pipeLen === 1 ? null : i);
+    sourceList = applySingleDataTransform(transOption, sourceList);
     // piped transform only support single input, except the fist one.
     // piped transform only support single output, except the last one.
     if (i !== len - 1) {
@@ -22234,23 +21761,14 @@ function applySingleDataTransform(transOption, upSourceList, infoForPrint,
 pipeIndex) {
   var errMsg = '';
   if (!upSourceList.length) {
-    if (process.env.NODE_ENV !== 'production') {
-      errMsg = 'Must have at least one upstream dataset.';
-    }
     throwError(errMsg);
   }
   if (!isObject$3(transOption)) {
-    if (process.env.NODE_ENV !== 'production') {
-      errMsg = 'transform declaration must be an object rather than ' + typeof transOption + '.';
-    }
     throwError(errMsg);
   }
   var transType = transOption.type;
   var externalTransform = externalTransformMap.get(transType);
   if (!externalTransform) {
-    if (process.env.NODE_ENV !== 'production') {
-      errMsg = 'Can not find transform on type "' + transType + '".';
-    }
     throwError(errMsg);
   }
   // Prepare source
@@ -22262,34 +21780,16 @@ pipeIndex) {
     upstreamList: extUpSourceList,
     config: clone$4(transOption.config)
   }));
-  if (process.env.NODE_ENV !== 'production') {
-    if (transOption.print) {
-      var printStrArr = map$1(resultList, function (extSource) {
-        var pipeIndexStr = pipeIndex != null ? ' === pipe index: ' + pipeIndex : '';
-        return ['=== dataset index: ' + infoForPrint.datasetIndex + pipeIndexStr + ' ===', '- transform result data:', makePrintable(extSource.data), '- transform result dimensions:', makePrintable(extSource.dimensions)].join('\n');
-      }).join('\n');
-      log(printStrArr);
-    }
-  }
   return map$1(resultList, function (result, resultIndex) {
     var errMsg = '';
     if (!isObject$3(result)) {
-      if (process.env.NODE_ENV !== 'production') {
-        errMsg = 'A transform should not return some empty results.';
-      }
       throwError(errMsg);
     }
     if (!result.data) {
-      if (process.env.NODE_ENV !== 'production') {
-        errMsg = 'Transform result data should be not be null or undefined';
-      }
       throwError(errMsg);
     }
     var sourceFormat = detectSourceFormat(result.data);
     if (!isSupportedSourceFormat(sourceFormat)) {
-      if (process.env.NODE_ENV !== 'production') {
-        errMsg = 'Transform result data should be array rows or object rows.';
-      }
       throwError(errMsg);
     }
     var resultMetaRawOption;
@@ -22416,9 +21916,6 @@ var DataStore = /** @class */function () {
    * Initialize from data
    */
   DataStore.prototype.initData = function (provider, inputDimensions, dimValueGetter) {
-    if (process.env.NODE_ENV !== 'production') {
-      assert(isFunction(provider.getItem) && isFunction(provider.count), 'Invalid data provider.');
-    }
     this._provider = provider;
     // Clear
     this._chunks = [];
@@ -22430,13 +21927,8 @@ var DataStore = /** @class */function () {
     this._dimValueGetter = dimValueGetter || defaultGetter;
     // Reset raw extent.
     this._rawExtent = [];
-    var willRetrieveDataByName = shouldRetrieveDataByName(source);
+    shouldRetrieveDataByName(source);
     this._dimensions = map$1(inputDimensions, function (dim) {
-      if (process.env.NODE_ENV !== 'production') {
-        if (willRetrieveDataByName) {
-          assert(dim.property != null);
-        }
-      }
       return {
         // Only pick these two props. Not leak other properties like orderMeta.
         type: dim.type,
@@ -22517,9 +22009,6 @@ var DataStore = /** @class */function () {
    * Caution: Can be only called on raw data (before `this._indices` created).
    */
   DataStore.prototype.appendData = function (data) {
-    if (process.env.NODE_ENV !== 'production') {
-      assert(!this._indices, 'appendData can only be called on raw data.');
-    }
     var provider = this._provider;
     var start = this.count();
     provider.appendData(data);
@@ -23502,24 +22991,15 @@ var SourceManager = /** @class */function () {
         upstreamSignList = [];
       }
     }
-    if (process.env.NODE_ENV !== 'production') {
-      assert(resultSourceList && upstreamSignList);
-    }
     this._setLocalSource(resultSourceList, upstreamSignList);
   };
   SourceManager.prototype._applyTransform = function (upMgrList) {
     var datasetModel = this._sourceHost;
     var transformOption = datasetModel.get('transform', true);
     var fromTransformResult = datasetModel.get('fromTransformResult', true);
-    if (process.env.NODE_ENV !== 'production') {
-      assert(fromTransformResult != null || transformOption != null);
-    }
     if (fromTransformResult != null) {
       var errMsg = '';
       if (upMgrList.length !== 1) {
-        if (process.env.NODE_ENV !== 'production') {
-          errMsg = 'When using `fromTransformResult`, there should be only one upstream dataset';
-        }
         doThrow(errMsg);
       }
     }
@@ -23531,9 +23011,6 @@ var SourceManager = /** @class */function () {
       var upSource = upMgr.getSource(fromTransformResult || 0);
       var errMsg = '';
       if (fromTransformResult != null && !upSource) {
-        if (process.env.NODE_ENV !== 'production') {
-          errMsg = 'Can not retrieve result by `fromTransformResult`: ' + fromTransformResult;
-        }
         doThrow(errMsg);
       }
       upSourceList.push(upSource);
@@ -23590,9 +23067,6 @@ var SourceManager = /** @class */function () {
    *        Should have been sorted by `storeDimIndex` asc.
    */
   SourceManager.prototype.getSharedDataStore = function (seriesDimRequest) {
-    if (process.env.NODE_ENV !== 'production') {
-      assert(isSeries(this._sourceHost), 'Can only call getDataStore on series source manager.');
-    }
     var schema = seriesDimRequest.makeStoreSchema();
     return this._innerGetDataStore(schema.dimensions, seriesDimRequest.source, schema.hash);
   };
@@ -23924,9 +23398,6 @@ var TooltipMarkupStyleCreator = /** @class */function () {
     if (isString(marker)) {
       return marker;
     } else {
-      if (process.env.NODE_ENV !== 'production') {
-        assert(markerId);
-      }
       this.richTextStyles[markerId] = marker.style;
       return marker.content;
     }
@@ -24097,9 +23568,6 @@ var SeriesModel = /** @class */function (_super) {
     var data = this.getInitialData(option, ecModel);
     wrapData(data, this);
     this.dataTask.context.data = data;
-    if (process.env.NODE_ENV !== 'production') {
-      assert(data, 'getInitialData returned invalid data.');
-    }
     inner$m(this).dataBeforeProcessed = data;
     // If we reverse the order (make data firstly, and then make
     // dataBeforeProcessed by cloneShallow), cloneShallow will
@@ -24671,9 +24139,6 @@ var ChartView = /** @class */function () {
   }
   ChartView.prototype.init = function (ecModel, api) {};
   ChartView.prototype.render = function (seriesModel, ecModel, api, payload) {
-    if (process.env.NODE_ENV !== 'production') {
-      throw new Error('render method must been implemented');
-    }
   };
   /**
    * Highlight series or specified data item.
@@ -24681,9 +24146,6 @@ var ChartView = /** @class */function () {
   ChartView.prototype.highlight = function (seriesModel, ecModel, api, payload) {
     var data = seriesModel.getData(payload && payload.dataType);
     if (!data) {
-      if (process.env.NODE_ENV !== 'production') {
-        error("Unknown dataType " + payload.dataType);
-      }
       return;
     }
     toggleHighlight(data, payload, 'emphasis');
@@ -24694,9 +24156,6 @@ var ChartView = /** @class */function () {
   ChartView.prototype.downplay = function (seriesModel, ecModel, api, payload) {
     var data = seriesModel.getData(payload && payload.dataType);
     if (!data) {
-      if (process.env.NODE_ENV !== 'production') {
-        error("Unknown dataType " + payload.dataType);
-      }
       return;
     }
     toggleHighlight(data, payload, 'normal');
@@ -24761,7 +24220,7 @@ function toggleHighlight(data, payload, state) {
     });
   }
 }
-enableClassExtend(ChartView, ['dispose']);
+enableClassExtend(ChartView);
 enableClassManagement(ChartView);
 function renderTaskPlan(context) {
   return renderPlanner(context.model);
@@ -25374,10 +24833,6 @@ var Scheduler = /** @class */function () {
     each$f(this._allHandlers, function (handler) {
       var record = stageTaskMap.get(handler.uid) || stageTaskMap.set(handler.uid, {});
       var errMsg = '';
-      if (process.env.NODE_ENV !== 'production') {
-        // Currently do not need to support to sepecify them both.
-        errMsg = '"reset" and "overallReset" must not be both specified.';
-      }
       assert(!(handler.reset && handler.overallReset), errMsg);
       handler.reset && this._createSeriesStageTask(handler, record, ecModel, api);
       handler.overallReset && this._createOverallStageTask(handler, record, ecModel, api);
@@ -25553,9 +25008,6 @@ var Scheduler = /** @class */function () {
     // progress. Moreover, to avoid call the overall task each frame (too frequent),
     // we set the pipeline block.
     var errMsg = '';
-    if (process.env.NODE_ENV !== 'production') {
-      errMsg = '"createOnAllSeries" is not supported for "overallReset", ' + 'because it will block all streams.';
-    }
     assert(!stageHandler.createOnAllSeries, errMsg);
     if (seriesType) {
       ecModel.eachRawSeriesByType(seriesType, createStub);
@@ -26215,10 +25667,6 @@ function getItemVisualFromData(data, dataIndex, key) {
     case 'symbolSize':
     case 'liftZ':
       return data.getItemVisual(dataIndex, key);
-    default:
-      if (process.env.NODE_ENV !== 'production') {
-        console.warn("Unknown visual type " + key);
-      }
   }
 }
 function getVisualFromData(data, key) {
@@ -26232,10 +25680,6 @@ function getVisualFromData(data, key) {
     case 'symbolSize':
     case 'liftZ':
       return data.getVisual(key);
-    default:
-      if (process.env.NODE_ENV !== 'production') {
-        console.warn("Unknown visual type " + key);
-      }
   }
 }
 function setItemVisualFromData(data, dataIndex, key, value) {
@@ -26255,10 +25699,6 @@ function setItemVisualFromData(data, dataIndex, key, value) {
     case 'liftZ':
       data.setItemVisual(dataIndex, key, value);
       break;
-    default:
-      if (process.env.NODE_ENV !== 'production') {
-        console.warn("Unknown visual type " + key);
-      }
   }
 }
 
@@ -26279,9 +25719,6 @@ function createLegacyDataSelectAction(seriesType, ecRegisterAction) {
   each$f([[seriesType + 'ToggleSelect', 'toggleSelect'], [seriesType + 'Select', 'select'], [seriesType + 'UnSelect', 'unselect']], function (eventsMap) {
     ecRegisterAction(eventsMap[0], function (payload, ecModel, api) {
       payload = extend({}, payload);
-      if (process.env.NODE_ENV !== 'production') {
-        deprecateReplaceLog(payload.type, eventsMap[1]);
-      }
       api.dispatchAction(extend(payload, {
         type: eventsMap[1],
         seriesIndex: getSeriesIndices(ecModel, payload)
@@ -26292,9 +25729,6 @@ function createLegacyDataSelectAction(seriesType, ecRegisterAction) {
 function handleSeriesLegacySelectEvents(type, eventPostfix, ecIns, ecModel, payload) {
   var legacyEventName = type + eventPostfix;
   if (!ecIns.isSilent(legacyEventName)) {
-    if (process.env.NODE_ENV !== 'production') {
-      deprecateLog("event " + legacyEventName + " is deprecated.");
-    }
     ecModel.eachComponent({
       mainType: 'series',
       subType: 'pie'
@@ -27492,18 +26926,6 @@ function createOrUpdatePatternFromDecal(decalObject, api) {
       }
       width *= symbolRepeats;
       var height = lineBlockLengthY * lineBlockLengthsX.length * symbolArray.length;
-      if (process.env.NODE_ENV !== 'production') {
-        var warn = function (attrName) {
-          /* eslint-disable-next-line */
-          console.warn("Calculated decal size is greater than " + attrName + " due to decal option settings so " + attrName + " is used for the decal size. Please consider changing the decal option to make a smaller decal or set " + attrName + " to be larger to avoid incontinuity.");
-        };
-        if (width > decalOpt.maxTileWidth) {
-          warn('maxTileWidth');
-        }
-        if (height > decalOpt.maxTileHeight) {
-          warn('maxTileHeight');
-        }
-      }
       return {
         width: Math.max(1, Math.min(width, decalOpt.maxTileWidth)),
         height: Math.max(1, Math.min(height, decalOpt.maxTileHeight))
@@ -27746,19 +27168,9 @@ var lifecycle = new Eventful();
 var implsStore = {};
 // TODO Type
 function registerImpl(name, impl) {
-  if (process.env.NODE_ENV !== 'production') {
-    if (implsStore[name]) {
-      error("Already has an implementation of " + name + ".");
-    }
-  }
   implsStore[name] = impl;
 }
 function getImpl(name) {
-  if (process.env.NODE_ENV !== 'production') {
-    if (!implsStore[name]) {
-      error("Implementation of " + name + " doesn't exists.");
-    }
-  }
   return implsStore[name];
 }
 
@@ -27951,15 +27363,6 @@ var ECharts = /** @class */function (_super) {
     var defaultCoarsePointer = 'auto';
     var defaultUseDirtyRect = false;
     _this[MAIN_PROCESS_VERSION_KEY] = 1;
-    if (process.env.NODE_ENV !== 'production') {
-      var root = /* eslint-disable-next-line */
-      env.hasGlobalWindow ? window : global;
-      if (root) {
-        defaultRenderer = retrieve2(root.__ECHARTS__DEFAULT__RENDERER__, defaultRenderer);
-        defaultCoarsePointer = retrieve2(root.__ECHARTS__DEFAULT__COARSE_POINTER, defaultCoarsePointer);
-        defaultUseDirtyRect = retrieve2(root.__ECHARTS__DEFAULT__USE_DIRTY_RECT__, defaultUseDirtyRect);
-      }
-    }
     if (opts.ssr) {
       registerSSRDataGetter(function (el) {
         var ecData = getECData(el);
@@ -28087,9 +27490,6 @@ var ECharts = /** @class */function (_super) {
   /* eslint-disable-next-line */
   ECharts.prototype.setOption = function (option, notMerge, lazyUpdate) {
     if (this[IN_MAIN_PROCESS_KEY]) {
-      if (process.env.NODE_ENV !== 'production') {
-        error('`setOption` should not be called during main process.');
-      }
       return;
     }
     if (this._disposed) {
@@ -28160,9 +27560,6 @@ var ECharts = /** @class */function (_super) {
    */
   ECharts.prototype.setTheme = function (theme, opts) {
     if (this[IN_MAIN_PROCESS_KEY]) {
-      if (process.env.NODE_ENV !== 'production') {
-        error('`setTheme` should not be called during main process.');
-      }
       return;
     }
     if (this._disposed) {
@@ -28231,19 +27628,11 @@ var ECharts = /** @class */function (_super) {
    * @deprecated Use renderToCanvas instead.
    */
   ECharts.prototype.getRenderedCanvas = function (opts) {
-    if (process.env.NODE_ENV !== 'production') {
-      deprecateReplaceLog('getRenderedCanvas', 'renderToCanvas');
-    }
     return this.renderToCanvas(opts);
   };
   ECharts.prototype.renderToCanvas = function (opts) {
     opts = opts || {};
     var painter = this._zr.painter;
-    if (process.env.NODE_ENV !== 'production') {
-      if (painter.type !== 'canvas') {
-        throw new Error('renderToCanvas can only be used in the canvas renderer.');
-      }
-    }
     return painter.getRenderedCanvas({
       backgroundColor: opts.backgroundColor || this._model.get('backgroundColor'),
       pixelRatio: opts.pixelRatio || this.getDevicePixelRatio()
@@ -28252,11 +27641,6 @@ var ECharts = /** @class */function (_super) {
   ECharts.prototype.renderToSVGString = function (opts) {
     opts = opts || {};
     var painter = this._zr.painter;
-    if (process.env.NODE_ENV !== 'production') {
-      if (painter.type !== 'svg') {
-        throw new Error('renderToSVGString can only be used in the svg renderer.');
-      }
-    }
     return painter.renderToString({
       useViewBox: opts.useViewBox
     });
@@ -28430,16 +27814,8 @@ var ECharts = /** @class */function (_super) {
           var view = this._chartsMap[model.__viewId];
           if (view && view.containPoint) {
             result = result || view.containPoint(value, model);
-          } else {
-            if (process.env.NODE_ENV !== 'production') {
-              warn(key + ': ' + (view ? 'The found component do not support containPoint.' : 'No view mapping to the found component.'));
-            }
           }
-        } else {
-          if (process.env.NODE_ENV !== 'production') {
-            warn(key + ': containPoint is not supported');
-          }
-        }
+        } else ;
       }, this);
     }, this);
     return !!result;
@@ -28465,11 +27841,6 @@ var ECharts = /** @class */function (_super) {
       defaultMainType: 'series'
     });
     var seriesModel = parsedFinder.seriesModel;
-    if (process.env.NODE_ENV !== 'production') {
-      if (!seriesModel) {
-        warn('There is no specified series model');
-      }
-    }
     var data = seriesModel.getData();
     var dataIndexInside = parsedFinder.hasOwnProperty('dataIndexInside') ? parsedFinder.dataIndexInside : parsedFinder.hasOwnProperty('dataIndex') ? data.indexOfRawIndex(parsedFinder.dataIndex) : null;
     return dataIndexInside != null ? getItemVisualFromData(data, dataIndexInside, visualType) : getVisualFromData(data, visualType);
@@ -28533,14 +27904,6 @@ var ECharts = /** @class */function (_super) {
           }
           var model = componentType && componentIndex != null && ecModel.getComponent(componentType, componentIndex);
           var view = model && _this[model.mainType === 'series' ? '_chartsMap' : '_componentsMap'][model.__viewId];
-          if (process.env.NODE_ENV !== 'production') {
-            // `event.componentType` and `event[componentTpype + 'Index']` must not
-            // be missed, otherwise there is no way to distinguish source component.
-            // See `dataFormat.getDataParams`.
-            if (!isGlobalOut && !(model && view)) {
-              warn('model or view can not be found by params');
-            }
-          }
           params.event = e;
           params.type = eveName;
           _this._$eventProcessor.eventInfo = {
@@ -28611,9 +27974,6 @@ var ECharts = /** @class */function (_super) {
    */
   ECharts.prototype.resize = function (opts) {
     if (this[IN_MAIN_PROCESS_KEY]) {
-      if (process.env.NODE_ENV !== 'production') {
-        error('`resize` should not be called during main process.');
-      }
       return;
     }
     if (this._disposed) {
@@ -28670,9 +28030,6 @@ var ECharts = /** @class */function (_super) {
     name = name || 'default';
     this.hideLoading();
     if (!loadingEffects[name]) {
-      if (process.env.NODE_ENV !== 'production') {
-        warn('Loading effects ' + name + ' not exists.');
-      }
       return;
     }
     var el = loadingEffects[name](this._api, cfg);
@@ -28758,9 +28115,6 @@ var ECharts = /** @class */function (_super) {
     var seriesIndex = params.seriesIndex;
     var ecModel = this.getModel();
     var seriesModel = ecModel.getSeriesByIndex(seriesIndex);
-    if (process.env.NODE_ENV !== 'production') {
-      assert(params.data && seriesModel);
-    }
     seriesModel.appendData(params);
     // Note: `appendData` does not support that update extent of coordinate
     // system, util some scenario require that. In the expected usage of
@@ -28821,9 +28175,6 @@ var ECharts = /** @class */function (_super) {
           // like "liquidfill", but recommend "series.liquidfill"
           // But need a base class to make a type series.
           ChartView.getClass(classType.sub);
-          if (process.env.NODE_ENV !== 'production') {
-            assert(Clazz, classType.sub + ' does not exist.');
-          }
           view = new Clazz();
           view.init(ecModel, api);
           viewMap[viewId] = view;
@@ -29101,9 +28452,6 @@ var ECharts = /** @class */function (_super) {
         if (coordSys[methodName] && (result = coordSys[methodName](ecModel, parsedFinder, value, opt)) != null) {
           return result;
         }
-      }
-      if (process.env.NODE_ENV !== 'production') {
-        warn('No coordinate system that supports ' + methodName + ' found by the given finder.');
       }
     }
     doConvertPixel = doConvertPixelImpl;
@@ -29691,7 +29039,6 @@ echartsProto.off = createRegisterEventWithLowercaseECharts('off');
 // @ts-ignore
 echartsProto.one = function (eventName, cb, ctx) {
   var self = this;
-  deprecateLog('ECharts#one is deprecated.');
   function wrapped() {
     var args2 = [];
     for (var _i = 0; _i < arguments.length; _i++) {
@@ -29706,9 +29053,6 @@ echartsProto.one = function (eventName, cb, ctx) {
 };
 var MOUSE_EVENT_NAMES = ['click', 'dblclick', 'mouseover', 'mouseout', 'mousemove', 'mousedown', 'mouseup', 'globalout', 'contextmenu'];
 function disposedWarning(id) {
-  if (process.env.NODE_ENV !== 'production') {
-    warn('Instance ' + id + ' has been disposed');
-  }
 }
 var actions = {};
 /**
@@ -29740,22 +29084,9 @@ var DOM_ATTRIBUTE_KEY = '_echarts_instance_';
  */
 function init$1(dom, theme, opts) {
   {
-    if (process.env.NODE_ENV !== 'production') {
-      if (!dom) {
-        throw new Error('Initialize failed: invalid dom.');
-      }
-    }
     var existInstance = getInstanceByDom(dom);
     if (existInstance) {
-      if (process.env.NODE_ENV !== 'production') {
-        warn('There is a chart instance already initialized on the dom.');
-      }
       return existInstance;
-    }
-    if (process.env.NODE_ENV !== 'production') {
-      if (isDom(dom) && dom.nodeName.toUpperCase() !== 'CANVAS' && (!dom.clientWidth && (!opts) || !dom.clientHeight && (!opts))) {
-        warn('Can\'t get DOM width or height. Please check ' + 'dom.clientWidth and dom.clientHeight. They should not be 0.' + 'For example, you may need to call this in the callback ' + 'of window.onload.');
-      }
     }
   }
   var chart = new ECharts(dom, theme, opts);
@@ -29856,9 +29187,6 @@ function registerAction$1(arg0, arg1, action) {
   if (refineEvent && publishNonRefinedEvent) {
     publicEventTypeMap[nonRefinedEventType] = 1;
   }
-  if (process.env.NODE_ENV !== 'production' && connectionEventRevertMap[nonRefinedEventType]) {
-    error(nonRefinedEventType + " must not be shared; use \"refineEvent\" if you intend to share an event name.");
-  }
   connectionEventRevertMap[nonRefinedEventType] = actionType;
 }
 function registerCoordinateSystem(type, coordSysCreator) {
@@ -29875,15 +29203,6 @@ function normalizeRegister(targetList, priority, fn, defaultPriority, visualType
   if (isFunction(priority) || isObject$3(priority)) {
     fn = priority;
     priority = defaultPriority;
-  }
-  if (process.env.NODE_ENV !== 'production') {
-    if (isNaN(priority) || priority == null) {
-      throw new Error('Illegal priority');
-    }
-    // Check duplicate
-    each$f(targetList, function (wrap) {
-      assert(wrap.__raw !== fn);
-    });
   }
   // Already registered
   if (indexOf(registeredTasks, fn) >= 0) {
@@ -30331,9 +29650,6 @@ function summarizeDimensions(data, schema) {
     var dimItem = data.getDimensionInfo(dimName);
     var coordDim = dimItem.coordDim;
     if (coordDim) {
-      if (process.env.NODE_ENV !== 'production') {
-        assert(VISUAL_DIMENSIONS.get(coordDim) == null);
-      }
       var coordDimIndex = dimItem.coordDimIndex;
       getOrCreateEncodeArr(encode, coordDim)[coordDimIndex] = dimName;
       if (!dimItem.isExtraCoord) {
@@ -30749,9 +30065,6 @@ var SeriesData = /** @class */function () {
       if (otherDims.itemId === 0) {
         this._idDimIdx = dimIdx;
       }
-      if (process.env.NODE_ENV !== 'production') {
-        assert(assignStoreDimIdx || dimensionInfo.storeDimIndex >= 0);
-      }
       if (assignStoreDimIdx) {
         dimensionInfo.storeDimIndex = i;
       }
@@ -30848,11 +30161,6 @@ var SeriesData = /** @class */function () {
   };
   SeriesData.prototype._getStoreDimIndex = function (dim) {
     var dimIdx = this.getDimensionIndex(dim);
-    if (process.env.NODE_ENV !== 'production') {
-      if (dimIdx == null) {
-        throw new Error('Unknown dimension ' + dim);
-      }
-    }
     return dimIdx;
   };
   /**
@@ -31182,11 +30490,6 @@ var SeriesData = /** @class */function () {
    */
   SeriesData.prototype.rawIndexOf = function (dim, value) {
     var invertedIndices = dim && this._invertedIndicesMap[dim];
-    if (process.env.NODE_ENV !== 'production') {
-      if (!invertedIndices) {
-        throw new Error('Do not supported yet');
-      }
-    }
     var rawIndex = invertedIndices && invertedIndices[value];
     if (rawIndex == null || isNaN(rawIndex)) {
       return INDEX_NOT_FOUND;
@@ -31260,17 +30563,8 @@ var SeriesData = /** @class */function () {
     return list;
   };
   SeriesData.prototype.modify = function (dims, cb, ctx, ctxCompat) {
-    var _this = this;
     // ctxCompat just for compat echarts3
     var fCtx = ctx || ctxCompat || this;
-    if (process.env.NODE_ENV !== 'production') {
-      each$f(normalizeDimensions(dims), function (dim) {
-        var dimInfo = _this.getDimensionInfo(dim);
-        if (!dimInfo.isCalculationCoord) {
-          console.error('Danger: only stack dimension can be modified');
-        }
-      });
-    }
     var dimIndices = map(normalizeDimensions(dims), this._getStoreDimIndex, this);
     // If do shallow clone here, if there are too many stacked series,
     // it still cost lots of memory, because `_store.dimensions` are not shared.
@@ -31880,14 +31174,6 @@ var fetchers = {
   cartesian2d: function (seriesModel, result, axisMap, categoryAxisMap) {
     var xAxisModel = seriesModel.getReferringComponents('xAxis', SINGLE_REFERRING).models[0];
     var yAxisModel = seriesModel.getReferringComponents('yAxis', SINGLE_REFERRING).models[0];
-    if (process.env.NODE_ENV !== 'production') {
-      if (!xAxisModel) {
-        throw new Error('xAxis "' + retrieve(seriesModel.get('xAxisIndex'), seriesModel.get('xAxisId'), 0) + '" not found');
-      }
-      if (!yAxisModel) {
-        throw new Error('yAxis "' + retrieve(seriesModel.get('xAxisIndex'), seriesModel.get('yAxisId'), 0) + '" not found');
-      }
-    }
     result.coordSysDims = ['x', 'y'];
     axisMap.set('x', xAxisModel);
     axisMap.set('y', yAxisModel);
@@ -31902,11 +31188,6 @@ var fetchers = {
   },
   singleAxis: function (seriesModel, result, axisMap, categoryAxisMap) {
     var singleAxisModel = seriesModel.getReferringComponents('singleAxis', SINGLE_REFERRING).models[0];
-    if (process.env.NODE_ENV !== 'production') {
-      if (!singleAxisModel) {
-        throw new Error('singleAxis should be specified.');
-      }
-    }
     result.coordSysDims = ['single'];
     axisMap.set('single', singleAxisModel);
     if (isCategory(singleAxisModel)) {
@@ -31918,14 +31199,6 @@ var fetchers = {
     var polarModel = seriesModel.getReferringComponents('polar', SINGLE_REFERRING).models[0];
     var radiusAxisModel = polarModel.findAxisModel('radiusAxis');
     var angleAxisModel = polarModel.findAxisModel('angleAxis');
-    if (process.env.NODE_ENV !== 'production') {
-      if (!angleAxisModel) {
-        throw new Error('angleAxis option not found');
-      }
-      if (!radiusAxisModel) {
-        throw new Error('radiusAxis option not found');
-      }
-    }
     result.coordSysDims = ['radius', 'angle'];
     axisMap.set('radius', radiusAxisModel);
     axisMap.set('angle', angleAxisModel);
@@ -31959,11 +31232,6 @@ var fetchers = {
   },
   matrix: function (seriesModel, result, axisMap, categoryAxisMap) {
     var matrixModel = seriesModel.getReferringComponents('matrix', SINGLE_REFERRING).models[0];
-    if (process.env.NODE_ENV !== 'production') {
-      if (!matrixModel) {
-        throw new Error('matrix coordinate system should be specified.');
-      }
-    }
     result.coordSysDims = ['x', 'y'];
     var xModel = matrixModel.getDimensionModel('x');
     var yModel = matrixModel.getDimensionModel('y');
@@ -32230,11 +31498,6 @@ function firstDataNotNull(arr) {
   return arr[i];
 }
 
-function isValueNice(val) {
-  var exp10 = Math.pow(10, quantityExponent(Math.abs(val)));
-  var f = Math.abs(val / exp10);
-  return f === 0 || f === 1 || f === 2 || f === 3 || f === 5;
-}
 function isIntervalOrLogScale(scale) {
   return scale.type === 'interval' || scale.type === 'log';
 }
@@ -33731,9 +32994,6 @@ function getIntervalTicks(bottomUnitName, approxInterval, isUTC, extent, extentS
         value: dateTime
       });
       if (iter++ > safeLimit) {
-        if (process.env.NODE_ENV !== 'production') {
-          warn('Exceed safe limit in time scale.');
-        }
         break;
       }
       date[setMethodName](date[getMethodName]() + interval);
@@ -34111,9 +33371,6 @@ var ScaleRawExtentInfo = /** @class */function () {
       var boundaryGap = model.get('boundaryGap');
       var boundaryGapArr = isArray$1(boundaryGap) ? boundaryGap : [boundaryGap || 0, boundaryGap || 0];
       if (typeof boundaryGapArr[0] === 'boolean' || typeof boundaryGapArr[1] === 'boolean') {
-        if (process.env.NODE_ENV !== 'production') {
-          console.warn('Boolean type for boundaryGap is only ' + 'allowed for ordinal axis. Please use string in ' + 'percentage instead, e.g., "20%". Currently, ' + 'boundaryGap is set to be 0.');
-        }
         this._boundaryGapInner = [0, 0];
       } else {
         this._boundaryGapInner = [parsePercent$1(boundaryGapArr[0], 1), parsePercent$1(boundaryGapArr[1], 1)];
@@ -34196,18 +33453,10 @@ var ScaleRawExtentInfo = /** @class */function () {
     };
   };
   ScaleRawExtentInfo.prototype.modifyDataMinMax = function (minMaxName, val) {
-    if (process.env.NODE_ENV !== 'production') {
-      assert(!this.frozen);
-    }
     this[DATA_MIN_MAX_ATTR[minMaxName]] = val;
   };
   ScaleRawExtentInfo.prototype.setDeterminedMinMax = function (minMaxName, val) {
     var attr = DETERMINED_MIN_MAX_ATTR[minMaxName];
-    if (process.env.NODE_ENV !== 'production') {
-      assert(!this.frozen
-      // Earse them usually means logic flaw.
-      && this[attr] == null);
-    }
     this[attr] = val;
   };
   ScaleRawExtentInfo.prototype.freeze = function () {
@@ -34517,15 +33766,9 @@ function retrieveAxisBreaksOption(model) {
   var option = model.get('breaks', true);
   if (option != null) {
     if (!getScaleBreakHelper()) {
-      if (process.env.NODE_ENV !== 'production') {
-        error('Must `import {AxisBreak} from "echarts/features.js"; use(AxisBreak);` first if using breaks option.');
-      }
       return undefined;
     }
     if (!isSupportAxisBreak(model.axis)) {
-      if (process.env.NODE_ENV !== 'production') {
-        error("Axis '" + model.axis.dim + "'-'" + model.axis.type + "' does not support break.");
-      }
       return undefined;
     }
     return option;
@@ -37807,9 +37050,6 @@ function setGradient(style, attrs, target, scope) {
         gradientAttrs.r = retrieve2(val.r, 0.5);
     }
     else {
-        if (process.env.NODE_ENV !== 'production') {
-            logError('Illegal gradient type.');
-        }
         return;
     }
     var colors = val.colorStops;
@@ -38002,11 +37242,6 @@ function createKeyToOldIdx(children, beginIdx, endIdx) {
     for (var i = beginIdx; i <= endIdx; ++i) {
         var key = children[i].key;
         if (key !== undefined) {
-            if (process.env.NODE_ENV !== 'production') {
-                if (map[key] != null) {
-                    console.error("Duplicate key " + key);
-                }
-            }
             map[key] = i;
         }
     }
@@ -38243,8 +37478,8 @@ var svgId = 0;
 var SVGPainter = (function () {
     function SVGPainter(root, storage, opts) {
         this.type = 'svg';
-        this.refreshHover = createMethodNotSupport('refreshHover');
-        this.configLayer = createMethodNotSupport('configLayer');
+        this.refreshHover = createMethodNotSupport();
+        this.configLayer = createMethodNotSupport();
         this.storage = storage;
         this._opts = opts = extend({}, opts);
         this.root = root;
@@ -38451,9 +37686,6 @@ var SVGPainter = (function () {
 }());
 function createMethodNotSupport(method) {
     return function () {
-        if (process.env.NODE_ENV !== 'production') {
-            logError('In SVG mode painter not support method "' + method + '"');
-        }
     };
 }
 function createBackgroundVNode(width, height, backgroundColor, scope) {
@@ -39122,15 +38354,9 @@ var CanvasPainter = (function () {
         var prevLayer = null;
         var i = -1;
         if (layersMap[zlevel]) {
-            if (process.env.NODE_ENV !== 'production') {
-                logError('ZLevel ' + zlevel + ' has been used already');
-            }
             return;
         }
         if (!isLayerValid(layer)) {
-            if (process.env.NODE_ENV !== 'production') {
-                logError('Layer of zlevel ' + zlevel + ' is not valid');
-            }
             return;
         }
         if (len > 0 && zlevel > zlevelList[0]) {
@@ -39421,12 +38647,6 @@ var LineSeriesModel = /** @class */function (_super) {
     return _this;
   }
   LineSeriesModel.prototype.getInitialData = function (option) {
-    if (process.env.NODE_ENV !== 'production') {
-      var coordSys = option.coordinateSystem;
-      if (coordSys !== 'polar' && coordSys !== 'cartesian2d') {
-        throw new Error('Line not support coordinateSystem besides cartesian and polar');
-      }
-    }
     return createSeriesData(null, this, {
       useEncodeDefaulter: true
     });
@@ -40820,9 +40040,6 @@ function getVisualGradient(data, coordSys, api) {
     return;
   }
   if (coordSys.type !== 'cartesian2d') {
-    if (process.env.NODE_ENV !== 'production') {
-      console.warn('Visual map on line style is only supported on cartesian2d.');
-    }
     return;
   }
   var coordDim;
@@ -40837,9 +40054,6 @@ function getVisualGradient(data, coordSys, api) {
     }
   }
   if (!visualMeta) {
-    if (process.env.NODE_ENV !== 'production') {
-      console.warn('Visual map on line style only support x or y dimension.');
-    }
     return;
   }
   // If the area to be rendered is bigger than area defined by LinearGradient,
@@ -41039,11 +40253,6 @@ function createLineClipPath(lineView, coordSys, hasAnimation, seriesModel) {
     }
     return clipPath;
   } else {
-    if (process.env.NODE_ENV !== 'production') {
-      if (seriesModel.get(['endLabel', 'show'])) {
-        console.warn('endLabel is not supported for lines in polar systems.');
-      }
-    }
     return createPolarClipPath(coordSys, hasAnimation, seriesModel);
   }
 }
@@ -42322,8 +41531,6 @@ var BarView = /** @class */function (_super) {
       // Clear previously rendered progressive elements.
       this._progressiveEls = null;
       this._isLargeDraw ? this._renderLarge(seriesModel, ecModel, api) : this._renderNormal(seriesModel, ecModel, api, payload);
-    } else if (process.env.NODE_ENV !== 'production') {
-      warn('Only cartesian2d and polar supported for bar.');
     }
   };
   BarView.prototype.incrementalPrepareRender = function (seriesModel) {
@@ -42813,16 +42020,6 @@ var elementCreator = {
 function shouldRealtimeSort(seriesModel, coordSys) {
   var realtimeSortOption = seriesModel.get('realtimeSort', true);
   var baseAxis = coordSys.getBaseAxis();
-  if (process.env.NODE_ENV !== 'production') {
-    if (realtimeSortOption) {
-      if (baseAxis.type !== 'category') {
-        warn('`realtimeSort` will not work because this bar series is not based on a category axis.');
-      }
-      if (coordSys.type !== 'cartesian2d') {
-        warn('`realtimeSort` will not work because this bar series is not on cartesian2d.');
-      }
-    }
-  }
   if (realtimeSortOption && baseAxis.type === 'category' && coordSys.type === 'cartesian2d') {
     return {
       baseAxis: baseAxis,
@@ -45607,13 +44804,6 @@ var AxisBuilder = /** @class */function () {
    * before they are created.
    */
   AxisBuilder.prototype.updateCfg = function (opt) {
-    if (process.env.NODE_ENV !== 'production') {
-      var ready = this._shared.ensureRecord(this._axisModel).ready;
-      // After that, changing cfg is not supported; avoid unnecessary complexity.
-      assert(!ready.axisLine && !ready.axisTickLabelDetermine);
-      // Have to be called again if cfg changed.
-      ready.axisName = ready.axisTickLabelEstimate = false;
-    }
     var raw = this._cfg.raw;
     raw.position = opt.position;
     raw.labelOffset = opt.labelOffset;
@@ -45654,10 +44844,6 @@ var AxisBuilder = /** @class */function () {
       optionHideOverlap: axisModel.get(['axisLabel', 'hideOverlap']),
       showMinorTicks: axisModel.get(['minorTick', 'show'])
     };
-    if (process.env.NODE_ENV !== 'production') {
-      assert(cfg.position != null);
-      assert(cfg.rotation != null);
-    }
     this._cfg = cfg;
     // FIXME Not use a separate text group?
     var transformGroup = new Group$3({
@@ -45738,11 +44924,6 @@ var AxisBuilder = /** @class */function () {
 var AXIS_BUILDER_AXIS_PART_NAMES = ['axisLine', 'axisTickLabelEstimate', 'axisTickLabelDetermine', 'axisName'];
 var builders = {
   axisLine: function (cfg, local, shared, axisModel, group, transformGroup, api) {
-    if (process.env.NODE_ENV !== 'production') {
-      var ready = shared.ensureRecord(axisModel).ready;
-      assert(!ready.axisLine);
-      ready.axisLine = true;
-    }
     var shown = axisModel.get(['axisLine', 'show']);
     if (shown === 'auto') {
       shown = true;
@@ -45831,11 +45012,6 @@ var builders = {
    *  in size measurement. Thus this method should be idempotent, and should be performant.
    */
   axisTickLabelEstimate: function (cfg, local, shared, axisModel, group, transformGroup, api, extraParams) {
-    if (process.env.NODE_ENV !== 'production') {
-      var ready = shared.ensureRecord(axisModel).ready;
-      assert(!ready.axisTickLabelDetermine);
-      ready.axisTickLabelEstimate = true;
-    }
     var needCallLayout = dealLastTickLabelResultReusable(local, group, extraParams);
     if (needCallLayout) {
       layOutAxisTickLabel(cfg, local, shared, axisModel, group, transformGroup, api, AxisTickLabelComputingKind.estimate);
@@ -45846,10 +45022,6 @@ var builders = {
    * Can be only called once.
    */
   axisTickLabelDetermine: function (cfg, local, shared, axisModel, group, transformGroup, api, extraParams) {
-    if (process.env.NODE_ENV !== 'production') {
-      var ready = shared.ensureRecord(axisModel).ready;
-      ready.axisTickLabelDetermine = true;
-    }
     var needCallLayout = dealLastTickLabelResultReusable(local, group, extraParams);
     if (needCallLayout) {
       layOutAxisTickLabel(cfg, local, shared, axisModel, group, transformGroup, api, AxisTickLabelComputingKind.determine);
@@ -45864,11 +45036,6 @@ var builders = {
    */
   axisName: function (cfg, local, shared, axisModel, group, transformGroup, api, extraParams) {
     var sharedRecord = shared.ensureRecord(axisModel);
-    if (process.env.NODE_ENV !== 'production') {
-      var ready = sharedRecord.ready;
-      assert(ready.axisTickLabelEstimate || ready.axisTickLabelDetermine);
-      ready.axisName = true;
-    }
     // Remove the existing name result created in estimation phase.
     if (local.nameEl) {
       group.remove(local.nameEl);
@@ -45976,9 +45143,6 @@ var builders = {
     textEl.decomposeTransform();
     if (cfg.shouldNameMoveOverlap && nameLayout) {
       var record = shared.ensureRecord(axisModel);
-      if (process.env.NODE_ENV !== 'production') {
-        assert(record.labelInfoList);
-      }
       shared.resolveAxisNameOverlap(cfg, shared, axisModel, nameLayout, nameMoveDirVec, record);
     }
   }
@@ -46207,9 +45371,6 @@ function buildAxisMinorTicks(cfg, group, transformGroup, axisModel, tickDirectio
 function dealLastTickLabelResultReusable(local, group, extraParams) {
   if (axisLabelBuildResultExists(local)) {
     var axisLabelsCreationContext = local.axisLabelsCreationContext;
-    if (process.env.NODE_ENV !== 'production') {
-      assert(local.labelGroup && axisLabelsCreationContext);
-    }
     var noPxChangeTryDetermine = axisLabelsCreationContext.out.noPxChangeTryDetermine;
     if (extraParams.noPxChange) {
       var canDetermine = true;
@@ -46497,11 +45658,6 @@ function findAxisModels(seriesModel) {
   each$f(axisModelMap, function (v, key) {
     var axisType = key.replace(/Model$/, '');
     var axisModel = seriesModel.getReferringComponents(axisType, SINGLE_REFERRING).models[0];
-    if (process.env.NODE_ENV !== 'production') {
-      if (!axisModel) {
-        throw new Error(axisType + ' "' + retrieve3(seriesModel.get(axisType + 'Index'), seriesModel.get(axisType + 'Id'), 0) + '" not found');
-      }
-    }
     axisModelMap[key] = axisModel;
   });
   return axisModelMap;
@@ -46527,19 +45683,10 @@ function createCartesianAxisViewCommonPartBuilder(gridRect, cartesians, axisMode
 }
 function updateCartesianAxisViewCommonPartBuilder(axisBuilder, gridRect, axisModel) {
   var newRaw = layout$1(gridRect, axisModel);
-  if (process.env.NODE_ENV !== 'production') {
-    var oldRaw_1 = axisBuilder.__getRawCfg();
-    each$f(keys(newRaw), function (prop) {
-      if (prop !== 'position' && prop !== 'labelOffset') {
-        assert(newRaw[prop] === oldRaw_1[prop]);
-      }
-    });
-  }
   axisBuilder.updateCfg(newRaw);
 }
 
 function alignScaleTicks(scale, axisModel, alignToScale) {
-  var _a;
   var intervalScaleProto = IntervalScale.prototype;
   // NOTE: There is a precondition for log scale  here:
   // In log scale we store _interval and _extent of exponent value.
@@ -46619,12 +45766,6 @@ function alignScaleTicks(scale, axisModel, alignToScale) {
   intervalScaleProto.setInterval.call(scale, interval);
   if (t0 || t1) {
     intervalScaleProto.setNiceExtent.call(scale, min + interval, max - interval);
-  }
-  if (process.env.NODE_ENV !== 'production') {
-    var ticks = intervalScaleProto.getTicks.call(scale);
-    if (ticks[1] && (!isValueNice(interval) || getPrecisionSafe(ticks[1].value) > getPrecisionSafe(interval))) {
-      warn("The ticks may be not readable when set min: " + axisModel.get('min') + ", max: " + axisModel.get('max') + (" and alignTicks: true. (" + ((_a = axisModel.axis) === null || _a === void 0 ? void 0 : _a.dim) + "AxisIndex: " + axisModel.componentIndex + ")"), true);
-    }
   }
 }
 
@@ -46738,9 +45879,6 @@ var Grid = /** @class */function () {
           updateAllAxisExtentTransByGridRect(axesMap, gridRect);
           // console.timeEnd('legacyLayOutGridByContainLabel');
         } else {
-          if (process.env.NODE_ENV !== 'production') {
-            log('Specified `grid.containLabel` but no `use(LegacyGridContainLabel)`;' + 'use `grid.outerBounds` instead.', true);
-          }
           noPxChange = layOutGridByOuterBounds(gridRect.clone(), 'axisLabel', null, gridRect, axesMap, axisBuilderSharedCtx, layoutRef);
         }
       } else {
@@ -47002,14 +46140,6 @@ var Grid = /** @class */function () {
         var xAxisModel = axesModelMap.xAxisModel;
         var yAxisModel = axesModelMap.yAxisModel;
         var gridModel = xAxisModel.getCoordSysModel();
-        if (process.env.NODE_ENV !== 'production') {
-          if (!gridModel) {
-            throw new Error('Grid "' + retrieve3(xAxisModel.get('gridIndex'), xAxisModel.get('gridId'), 0) + '" not found');
-          }
-          if (xAxisModel.getCoordSysModel() !== yAxisModel.getCoordSysModel()) {
-            throw new Error('xAxis and yAxis must use the same grid');
-          }
-        }
         var grid = gridModel.coordinateSystem;
         return grid.getCartesian(xAxisModel.componentIndex, yAxisModel.componentIndex);
       }
@@ -47106,9 +46236,6 @@ function registerLegacyGridContainLabelImpl(impl) {
 }
 // Return noPxChange.
 function layOutGridByOuterBounds(outerBoundsRect, outerBoundsContain, outerBoundsClamp, gridRect, axesMap, axisBuilderSharedCtx, layoutRef) {
-  if (process.env.NODE_ENV !== 'production') {
-    assert(outerBoundsContain === 'all' || outerBoundsContain === 'axisLabel');
-  }
   // Assume `updateAllAxisExtentTransByGridRect` has been performed once before this call.
   // [NOTE]:
   // - The bounding rect of the axis elements might be sensitve to variations in `axis.extent` due to strategies
@@ -47257,19 +46384,12 @@ function prepareOuterBounds(gridModel, rawRridRect, layoutRef) {
     outerBoundsRect = rawRridRect.clone();
   } else if (optionOuterBoundsMode == null || optionOuterBoundsMode === 'auto') {
     outerBoundsRect = getLayoutRect(gridModel.get('outerBounds', true) || OUTER_BOUNDS_DEFAULT, layoutRef.refContainer);
-  } else if (optionOuterBoundsMode !== 'none') {
-    if (process.env.NODE_ENV !== 'production') {
-      error("Invalid grid[" + gridModel.componentIndex + "].outerBoundsMode.");
-    }
-  }
+  } else ;
   var optionOuterBoundsContain = gridModel.get('outerBoundsContain', true);
   var parsedOuterBoundsContain;
   if (optionOuterBoundsContain == null || optionOuterBoundsContain === 'auto') {
     parsedOuterBoundsContain = 'all';
   } else if (indexOf(['all', 'axisLabel'], optionOuterBoundsContain) < 0) {
-    if (process.env.NODE_ENV !== 'production') {
-      error("Invalid grid[" + gridModel.componentIndex + "].outerBoundsContain.");
-    }
     parsedOuterBoundsContain = 'all';
   } else {
     parsedOuterBoundsContain = optionOuterBoundsContain;
@@ -47609,11 +46729,6 @@ var AxisView = /** @class */function (_super) {
     this._axisPointer = null;
   };
   AxisView.registerAxisPointerClass = function (type, clazz) {
-    if (process.env.NODE_ENV !== 'production') {
-      if (axisPointerClazz[type]) {
-        throw new Error('axisPointer ' + type + ' exists');
-      }
-    }
     axisPointerClazz[type] = clazz;
   };
   AxisView.getAxisPointerClass = function (type) {
@@ -48615,10 +47730,6 @@ var RadarView = /** @class */function (_super) {
         // Close
         if (points[0]) {
           points.push(points[0].slice());
-        } else {
-          if (process.env.NODE_ENV !== 'production') {
-            console.error('Can\'t draw value axis ' + i);
-          }
         }
         if (showSplitLine) {
           var colorIndex = getColorIndex(splitLines, splitLineColorsArr, i);
@@ -49457,11 +48568,6 @@ var SVGParser = (function () {
     SVGParser.prototype.parse = function (xml, opt) {
         opt = opt || {};
         var svg = parseXML(xml);
-        if (process.env.NODE_ENV !== 'production') {
-            if (!svg) {
-                throw new Error('Illegal svg');
-            }
-        }
         this._defsUsePending = [];
         var root = new Group$3();
         this._root = root;
@@ -50644,9 +49750,6 @@ var geoSourceManager = {
   load: function (mapName, nameMap, nameProperty) {
     var resource = storage.get(mapName);
     if (!resource) {
-      if (process.env.NODE_ENV !== 'production') {
-        console.error('Map ' + mapName + ' not exists. The GeoJSON of the map must be provided.');
-      }
       return;
     }
     return resource.load(nameMap, nameProperty);
@@ -51973,26 +51076,11 @@ var Geo = /** @class */function (_super) {
     var projection = opt.projection;
     var source = geoSourceManager.load(map, opt.nameMap, opt.nameProperty);
     var resource = geoSourceManager.getGeoResource(map);
-    var resourceType = _this.resourceType = resource ? resource.type : null;
+    _this.resourceType = resource ? resource.type : null;
     var regions = _this.regions = source.regions;
     var defaultParams = GEO_DEFAULT_PARAMS[resource.type];
     _this._regionsMap = source.regionsMap;
     _this.regions = source.regions;
-    if (process.env.NODE_ENV !== 'production' && projection) {
-      // Do some check
-      if (resourceType === 'geoSVG') {
-        if (process.env.NODE_ENV !== 'production') {
-          warn("Map " + map + " with SVG source can't use projection. Only GeoJSON source supports projection.");
-        }
-        projection = null;
-      }
-      if (!(projection.project && projection.unproject)) {
-        if (process.env.NODE_ENV !== 'production') {
-          warn('project and unproject must be both provided in the projeciton.');
-        }
-        projection = null;
-      }
-    }
     _this.projection = projection;
     var boundingRect;
     if (projection) {
@@ -52118,11 +51206,7 @@ function resizeGeo(geoModel, api) {
   if (boundingCoords != null) {
     var leftTop_1 = boundingCoords[0];
     var rightBottom_1 = boundingCoords[1];
-    if (!(isFinite(leftTop_1[0]) && isFinite(leftTop_1[1]) && isFinite(rightBottom_1[0]) && isFinite(rightBottom_1[1]))) {
-      if (process.env.NODE_ENV !== 'production') {
-        console.error('Invalid boundingCoords');
-      }
-    } else {
+    if (!(isFinite(leftTop_1[0]) && isFinite(leftTop_1[1]) && isFinite(rightBottom_1[0]) && isFinite(rightBottom_1[1]))) ; else {
       // Sample around the lng/lat rect and use projection to calculate actual bounding rect.
       var projection_1 = this.projection;
       if (projection_1) {
@@ -52170,10 +51254,6 @@ function resizeGeo(geoModel, api) {
     size = parsePercent(sizeOption, Math.min(refContainer.width, refContainer.height));
     if (!isNaN(center[0]) && !isNaN(center[1]) && !isNaN(size)) {
       useCenterAndSize = true;
-    } else {
-      if (process.env.NODE_ENV !== 'production') {
-        console.warn('Given layoutCenter or layoutSize data are invalid. Use left/top/width/height instead.');
-      }
     }
   }
   var viewRect;
@@ -53280,10 +52360,6 @@ function drawEdge(seriesModel, node, virtualRoot, symbolEl, sourceOldLayout, sou
             childPoints: childPoints
           }
         }, seriesModel);
-      }
-    } else {
-      if (process.env.NODE_ENV !== 'production') {
-        throw new Error('The polyline edgeShape can only be used in orthogonal layout');
       }
     }
   }
@@ -56130,9 +55206,6 @@ function setVisualToOption(thisOption, visualArr) {
   if (thisOption.type === 'color') {
     thisOption.parsedVisual = map$1(visualArr, function (item) {
       var color = parse(item);
-      if (!color && process.env.NODE_ENV !== 'production') {
-        warn("'" + item + "' is an illegal color, fallback to '#000000'", true);
-      }
       return color || [0, 0, 0, 1];
     });
   }
@@ -58708,9 +57781,6 @@ var Graph = /** @class */function () {
     id = id == null ? '' + dataIndex : '' + id;
     var nodesMap = this._nodesMap;
     if (nodesMap[generateNodeKey(id)]) {
-      if (process.env.NODE_ENV !== 'production') {
-        console.error('Graph nodes have duplicate name or id');
-      }
       return;
     }
     var node = new GraphNode(id, dataIndex);
@@ -61053,16 +60123,6 @@ function labelLayout(data) {
       var x2 = void 0;
       var y2 = void 0;
       var labelLineLen = labelLineModel.get('length');
-      if (process.env.NODE_ENV !== 'production') {
-        if (orient === 'vertical' && ['top', 'bottom'].indexOf(labelPosition) > -1) {
-          labelPosition = 'left';
-          console.warn('Position error: Funnel chart on vertical orient dose not support top and bottom.');
-        }
-        if (orient === 'horizontal' && ['left', 'right'].indexOf(labelPosition) > -1) {
-          labelPosition = 'bottom';
-          console.warn('Position error: Funnel chart on horizontal orient dose not support left and right.');
-        }
-      }
       if (labelPosition === 'left') {
         // Left side
         x1 = (points[3][0] + points[0][0]) / 2;
@@ -62447,9 +61507,6 @@ var BrushController = /** @class */function (_super) {
      */
     _this._covers = [];
     _this._handlers = {};
-    if (process.env.NODE_ENV !== 'production') {
-      assert(zr);
-    }
     _this._zr = zr;
     _this.group = new Group$3();
     _this._uid = 'brushController_' + baseUID++;
@@ -62462,9 +61519,6 @@ var BrushController = /** @class */function (_super) {
    * If set to `false`, select disabled.
    */
   BrushController.prototype.enableBrush = function (brushOption) {
-    if (process.env.NODE_ENV !== 'production') {
-      assert(this._mounted);
-    }
     this._brushType && this._doDisableBrush();
     brushOption.brushType && this._doEnableBrush(brushOption);
     return this;
@@ -62505,9 +61559,6 @@ var BrushController = /** @class */function (_super) {
   };
   BrushController.prototype.mount = function (opt) {
     opt = opt || {};
-    if (process.env.NODE_ENV !== 'production') {
-      this._mounted = true; // should be at first.
-    }
     this._enableGlobalPan = opt.enableGlobalPan;
     var thisGroup = this.group;
     this._zr.add(thisGroup);
@@ -62530,9 +61581,6 @@ var BrushController = /** @class */function (_super) {
    *        If coverConfigList is null/undefined, all covers removed.
    */
   BrushController.prototype.updateCovers = function (coverConfigList) {
-    if (process.env.NODE_ENV !== 'production') {
-      assert(this._mounted);
-    }
     coverConfigList = map$1(coverConfigList, function (coverConfig) {
       return merge(clone$4(DEFAULT_BRUSH_OPT), coverConfig, true);
     });
@@ -62567,18 +61615,10 @@ var BrushController = /** @class */function (_super) {
     }
   };
   BrushController.prototype.unmount = function () {
-    if (process.env.NODE_ENV !== 'production') {
-      if (!this._mounted) {
-        return;
-      }
-    }
     this.enableBrush(false);
     // container may 'removeAll' outside.
     clearCovers(this);
     this._zr.remove(this.group);
-    if (process.env.NODE_ENV !== 'production') {
-      this._mounted = false; // should be at last.
-    }
     return this;
   };
   BrushController.prototype.dispose = function () {
@@ -62927,9 +61967,6 @@ function updateCoverByMouse(controller, e, localCursorPoint, isEnd) {
 }
 function determineBrushType(brushType, panel) {
   if (brushType === 'auto') {
-    if (process.env.NODE_ENV !== 'production') {
-      assert(panel && panel.defaultBrushType, 'MUST have defaultBrushType when brushType is "atuo"');
-    }
     return panel.defaultBrushType;
   }
   return brushType;
@@ -63660,10 +62697,6 @@ var SankeySeriesModel = /** @class */function (_super) {
     for (var i = 0; i < levels.length; i++) {
       if (levels[i].depth != null && levels[i].depth >= 0) {
         levelModels[levels[i].depth] = new Model(levels[i], this, ecModel);
-      } else {
-        if (process.env.NODE_ENV !== 'production') {
-          throw new Error('levels[i].depth is mandatory and should be natural number');
-        }
       }
     }
     var graph = createGraphFromNodeEdge(nodes, links, this, true, beforeLink);
@@ -64816,9 +63849,6 @@ var boxplotTransform = {
     var upstream = params.upstream;
     if (upstream.sourceFormat !== SOURCE_FORMAT_ARRAY_ROWS) {
       var errMsg = '';
-      if (process.env.NODE_ENV !== 'production') {
-        errMsg = makePrintable('source data is not applicable for this boxplot transform. Expect number[][].');
-      }
       throwError(errMsg);
     }
     var result = prepareBoxplotData(upstream.getRawData(), params.config);
@@ -66234,9 +65264,6 @@ var linesLayout = {
   reset: function (seriesModel) {
     var coordSys = seriesModel.coordinateSystem;
     if (!coordSys) {
-      if (process.env.NODE_ENV !== 'production') {
-        error('The lines series must have a coordinate system.');
-      }
       return;
     }
     var isPolyline = seriesModel.get('polyline');
@@ -66327,8 +65354,6 @@ var LinesView = /** @class */function (_super) {
           motionBlur: true,
           lastFrameAlpha: Math.max(Math.min(trailLength / 10 + 0.9, 1), 0)
         });
-      } else if (process.env.NODE_ENV !== 'production') {
-        console.warn('SVG render mode doesn\'t support lines with trail effect');
       }
     }
     lineDraw.updateData(data);
@@ -66385,11 +65410,6 @@ var LinesView = /** @class */function (_super) {
     var isPolyline = !!seriesModel.get('polyline');
     var pipelineContext = seriesModel.pipelineContext;
     var isLargeDraw = pipelineContext.large;
-    if (process.env.NODE_ENV !== 'production') {
-      if (hasEffect && isLargeDraw) {
-        console.warn('Large lines not support effect');
-      }
-    }
     if (!lineDraw || hasEffect !== this._hasEffet || isPolyline !== this._isPolyline || isLargeDraw !== this._isLargeDraw) {
       if (lineDraw) {
         lineDraw.remove();
@@ -66431,9 +65451,6 @@ var Float64Arr = typeof Float64Array === 'undefined' ? Array : Float64Array;
 function compatEc2(seriesOpt) {
   var data = seriesOpt.data;
   if (data && data[0] && data[0][0] && data[0][0].coord) {
-    if (process.env.NODE_ENV !== 'production') {
-      console.warn('Lines data configuration has been changed to' + ' { coords:[[1,2],[2,3]] }');
-    }
     seriesOpt.data = map$1(data, function (itemOpt) {
       var coords = [itemOpt[0].coord, itemOpt[1].coord];
       var target = {
@@ -66501,11 +65518,6 @@ var LinesSeriesModel = /** @class */function (_super) {
   LinesSeriesModel.prototype._getCoordsFromItemModel = function (idx) {
     var itemModel = this.getData().getItemModel(idx);
     var coords = itemModel.option instanceof Array ? itemModel.option : itemModel.getShallow('coords');
-    if (process.env.NODE_ENV !== 'production') {
-      if (!(coords instanceof Array && coords.length > 0 && coords[0] instanceof Array)) {
-        throw new Error('Invalid coords ' + JSON.stringify(coords) + '. Lines must have 2d coords array in data item.');
-      }
-    }
     return coords;
   };
   LinesSeriesModel.prototype.getLineCoordsCount = function (idx) {
@@ -66562,11 +65574,6 @@ var LinesSeriesModel = /** @class */function (_super) {
           var y = data[i++];
           coordsStorage[coordsCursor++] = x;
           coordsStorage[coordsCursor++] = y;
-          if (i > len) {
-            if (process.env.NODE_ENV !== 'production') {
-              throw new Error('Invalid data format.');
-            }
-          }
         }
       }
       return {
@@ -66582,12 +65589,6 @@ var LinesSeriesModel = /** @class */function (_super) {
     };
   };
   LinesSeriesModel.prototype.getInitialData = function (option, ecModel) {
-    if (process.env.NODE_ENV !== 'production') {
-      var CoordSys = CoordinateSystemManager.get(option.coordinateSystem);
-      if (!CoordSys) {
-        throw new Error('Unknown coordinate system ' + option.coordinateSystem);
-      }
-    }
     var lineData = new SeriesData(['value'], this);
     lineData.hasItemOption = false;
     lineData.initData(option.data, [], function (dataItem, dimName, dataIndex, dimIndex) {
@@ -66946,11 +65947,6 @@ var HeatmapView = /** @class */function (_super) {
         }
       });
     });
-    if (process.env.NODE_ENV !== 'production') {
-      if (!visualMapOfThisSeries) {
-        throw new Error('Heatmap must use with visualMap');
-      }
-    }
     // Clear previously rendered progressive elements.
     this._progressiveEls = null;
     this.group.removeAll();
@@ -66990,14 +65986,6 @@ var HeatmapView = /** @class */function (_super) {
     if (isCartesian2d) {
       var xAxis = coordSys.getAxis('x');
       var yAxis = coordSys.getAxis('y');
-      if (process.env.NODE_ENV !== 'production') {
-        if (!(xAxis.type === 'category' && yAxis.type === 'category')) {
-          throw new Error('Heatmap on cartesian must have two category axes');
-        }
-        if (!(xAxis.onBand && yAxis.onBand)) {
-          throw new Error('Heatmap on cartesian must have two axes with boundaryGap true');
-        }
-      }
       // add 0.5px to avoid the gaps
       width = xAxis.getBandWidth() + .5;
       height = yAxis.getBandWidth() + .5;
@@ -68520,9 +67508,6 @@ function installSunburstAction(registers) {
         payload.dataIndex = targetInfo.node.dataIndex;
       }
     }
-    if (process.env.NODE_ENV !== 'production') {
-      deprecateReplaceLog('sunburstHighlight', 'highlight');
-    }
     // Fast forward action
     api.dispatchAction(extend(payload, {
       type: 'highlight'
@@ -68533,9 +67518,6 @@ function installSunburstAction(registers) {
     update: 'updateView'
   }, function (payload, ecModel, api) {
     payload = extend({}, payload);
-    if (process.env.NODE_ENV !== 'production') {
-      deprecateReplaceLog('sunburstUnhighlight', 'downplay');
-    }
     api.dispatchAction(extend(payload, {
       type: 'downplay'
     }));
@@ -69399,7 +68381,6 @@ function matrixPrepareCustom(coordSys) {
   };
 }
 
-var deprecatedLogs = {};
 /**
  * Whether need to call `convertEC4CompatibleStyle`.
  */
@@ -69572,15 +68553,6 @@ function convertToEC4RichItem(out, richItem) {
   hasOwn(richItem, 'textShadowOffsetX') && (out.textShadowOffsetX = richItem.textShadowOffsetX);
   hasOwn(richItem, 'textShadowOffsetY') && (out.textShadowOffsetY = richItem.textShadowOffsetY);
 }
-function warnDeprecated(deprecated, insteadApproach) {
-  if (process.env.NODE_ENV !== 'production') {
-    var key = deprecated + '^_^' + insteadApproach;
-    if (!deprecatedLogs[key]) {
-      console.warn("[ECharts] DEPRECATED: \"" + deprecated + "\" has been deprecated. " + insteadApproach);
-      deprecatedLogs[key] = true;
-    }
-  }
-}
 
 var LEGACY_TRANSFORM_PROPS_MAP = {
   position: ['x', 'y'],
@@ -69588,11 +68560,11 @@ var LEGACY_TRANSFORM_PROPS_MAP = {
   origin: ['originX', 'originY']
 };
 var LEGACY_TRANSFORM_PROPS = keys(LEGACY_TRANSFORM_PROPS_MAP);
-var TRANSFORM_PROPS_MAP = reduce(TRANSFORMABLE_PROPS, function (obj, key) {
+reduce(TRANSFORMABLE_PROPS, function (obj, key) {
   obj[key] = 1;
   return obj;
 }, {});
-var transformPropNamesStr = TRANSFORMABLE_PROPS.join(', ');
+TRANSFORMABLE_PROPS.join(', ');
 // '' means root
 var ELEMENT_ANIMATABLE_PROPS = ['', 'style', 'shape', 'extra'];
 var transitionInnerStore = makeInner();
@@ -69778,22 +68750,13 @@ var tmpDuringScope = {};
 var transitionDuringAPI = {
   // Usually other props do not need to be changed in animation during.
   setTransform: function (key, val) {
-    if (process.env.NODE_ENV !== 'production') {
-      assert(hasOwn(TRANSFORM_PROPS_MAP, key), 'Only ' + transformPropNamesStr + ' available in `setTransform`.');
-    }
     tmpDuringScope.el[key] = val;
     return this;
   },
   getTransform: function (key) {
-    if (process.env.NODE_ENV !== 'production') {
-      assert(hasOwn(TRANSFORM_PROPS_MAP, key), 'Only ' + transformPropNamesStr + ' available in `getTransform`.');
-    }
     return tmpDuringScope.el[key];
   },
   setShape: function (key, val) {
-    if (process.env.NODE_ENV !== 'production') {
-      assertNotReserved(key);
-    }
     var el = tmpDuringScope.el;
     var shape = el.shape || (el.shape = {});
     shape[key] = val;
@@ -69801,65 +68764,38 @@ var transitionDuringAPI = {
     return this;
   },
   getShape: function (key) {
-    if (process.env.NODE_ENV !== 'production') {
-      assertNotReserved(key);
-    }
     var shape = tmpDuringScope.el.shape;
     if (shape) {
       return shape[key];
     }
   },
   setStyle: function (key, val) {
-    if (process.env.NODE_ENV !== 'production') {
-      assertNotReserved(key);
-    }
     var el = tmpDuringScope.el;
     var style = el.style;
     if (style) {
-      if (process.env.NODE_ENV !== 'production') {
-        if (eqNaN(val)) {
-          warn('style.' + key + ' must not be assigned with NaN.');
-        }
-      }
       style[key] = val;
       el.dirtyStyle && el.dirtyStyle();
     }
     return this;
   },
   getStyle: function (key) {
-    if (process.env.NODE_ENV !== 'production') {
-      assertNotReserved(key);
-    }
     var style = tmpDuringScope.el.style;
     if (style) {
       return style[key];
     }
   },
   setExtra: function (key, val) {
-    if (process.env.NODE_ENV !== 'production') {
-      assertNotReserved(key);
-    }
     var extra = tmpDuringScope.el.extra || (tmpDuringScope.el.extra = {});
     extra[key] = val;
     return this;
   },
   getExtra: function (key) {
-    if (process.env.NODE_ENV !== 'production') {
-      assertNotReserved(key);
-    }
     var extra = tmpDuringScope.el.extra;
     if (extra) {
       return extra[key];
     }
   }
 };
-function assertNotReserved(key) {
-  if (process.env.NODE_ENV !== 'production') {
-    if (key === 'transition' || key === 'enterFrom' || key === 'leaveTo') {
-      throw new Error('key must not be "' + key + '"');
-    }
-  }
-}
 function duringCall() {
   // Do not provide "percent" until some requirements come.
   // Because consider thies case:
@@ -69950,9 +68886,6 @@ function prepareTransformTransitionFrom(el, elOption, transFromProps) {
       continue;
     }
     var elVal = el[key];
-    if (process.env.NODE_ENV !== 'production') {
-      checkTransformPropRefer(key, 'el.transition');
-    }
     // Do not clone, animator will perform that clone.
     transFromProps[key] = elVal;
   }
@@ -70013,14 +68946,6 @@ function isNonStyleTransitionEnabled(optVal, elVal) {
   // The same as `checkNonStyleTansitionRefer`.
   return !isArrayLike(optVal) ? optVal != null && isFinite(optVal) : optVal !== elVal;
 }
-var checkTransformPropRefer;
-if (process.env.NODE_ENV !== 'production') {
-  checkTransformPropRefer = function (key, usedIn) {
-    if (!hasOwn(TRANSFORM_PROPS_MAP, key)) {
-      warn('Prop `' + key + '` is not a permitted in `' + usedIn + '`. ' + 'Only `' + keys(TRANSFORM_PROPS_MAP).join('`, `') + '` are permitted.');
-    }
-  };
-}
 
 var getStateToRestore = makeInner();
 var KEYFRAME_EXCLUDE_KEYS = ['percent', 'easing', 'shape', 'style', 'extra'];
@@ -70061,7 +68986,6 @@ function applyKeyframeAnimation(el, animationOpts, animatableModel) {
       return;
     }
     var animator;
-    var endFrameIsSet = false;
     // Sort keyframes by percent.
     keyframes.sort(function (a, b) {
       return a.percent - b.percent;
@@ -70070,11 +68994,6 @@ function applyKeyframeAnimation(el, animationOpts, animatableModel) {
       // Stop current animation.
       var animators = el.animators;
       var kfValues = targetPropName ? kf[targetPropName] : kf;
-      if (process.env.NODE_ENV !== 'production') {
-        if (kf.percent >= 1) {
-          endFrameIsSet = true;
-        }
-      }
       if (!kfValues) {
         return;
       }
@@ -70108,11 +69027,6 @@ function applyKeyframeAnimation(el, animationOpts, animatableModel) {
     });
     if (!animator) {
       return;
-    }
-    if (process.env.NODE_ENV !== 'production') {
-      if (!endFrameIsSet) {
-        warn('End frame with percent: 1 is missing in the keyframeAnimation.', true);
-      }
     }
     animator.delay(animationOpts.delay || 0).duration(duration).start(animationOpts.easing);
   });
@@ -70295,9 +69209,6 @@ function createEl$1(elOption) {
     var shape = elOption.shape;
     if (!shape || !shape.paths) {
       var errMsg = '';
-      if (process.env.NODE_ENV !== 'production') {
-        errMsg = 'shape.paths must be specified in compoundPath';
-      }
       throwError(errMsg);
     }
     var paths = map$1(shape.paths, function (path) {
@@ -70307,9 +69218,6 @@ function createEl$1(elOption) {
       var Clz = getShapeClass(path.type);
       if (!Clz) {
         var errMsg = '';
-        if (process.env.NODE_ENV !== 'production') {
-          errMsg = 'graphic type "' + graphicType + '" can not be found.';
-        }
         throwError(errMsg);
       }
       return new Clz();
@@ -70323,9 +69231,6 @@ function createEl$1(elOption) {
     var Clz = getShapeClass(graphicType);
     if (!Clz) {
       var errMsg = '';
-      if (process.env.NODE_ENV !== 'production') {
-        errMsg = 'graphic type "' + graphicType + '" can not be found.';
-      }
       throwError(errMsg);
     }
     el = new Clz();
@@ -70449,17 +69354,11 @@ function makeRenderItem(customSeries, data, ecModel, api) {
     var registeredRenderItem = getCustomSeries(renderItem);
     if (registeredRenderItem) {
       renderItem = registeredRenderItem;
-    } else if (process.env.NODE_ENV !== 'production') {
-      console.warn("Custom series renderItem '" + renderItem + "' not found.\n                Call 'echarts.registerCustomSeries' to register it.");
     }
   }
   var coordSys = customSeries.coordinateSystem;
   var prepareResult = {};
   if (coordSys) {
-    if (process.env.NODE_ENV !== 'production') {
-      assert(renderItem, 'series.render is required.');
-      assert(coordSys.prepareCustoms || prepareCustoms[coordSys.type], 'This coordSys does not support custom series.');
-    }
     // `coordSys.prepareCustoms` is used for external coord sys like bmap.
     prepareResult = coordSys.prepareCustoms ? coordSys.prepareCustoms(coordSys) : prepareCustoms[coordSys.type](coordSys);
   }
@@ -70572,9 +69471,6 @@ function makeRenderItem(customSeries, data, ecModel, api) {
    * @param dataIndexInside by default `currDataIndexInside`.
    */
   function style(userProps, dataIndexInside) {
-    if (process.env.NODE_ENV !== 'production') {
-      warnDeprecated('api.style', 'Please write literal style directly instead.');
-    }
     dataIndexInside == null && (dataIndexInside = currDataIndexInside);
     var style = data.getItemVisual(dataIndexInside, 'style');
     var visualColor = style && style.fill;
@@ -70604,9 +69500,6 @@ function makeRenderItem(customSeries, data, ecModel, api) {
    * @param dataIndexInside by default `currDataIndexInside`.
    */
   function styleEmphasis(userProps, dataIndexInside) {
-    if (process.env.NODE_ENV !== 'production') {
-      warnDeprecated('api.styleEmphasis', 'Please write literal style directly instead.');
-    }
     dataIndexInside == null && (dataIndexInside = currDataIndexInside);
     var itemStyle = getItemStyleModel(dataIndexInside, EMPHASIS).getItemStyle();
     var labelModel = getLabelModel(dataIndexInside, EMPHASIS);
@@ -70707,9 +69600,6 @@ function createOrUpdateItem(api, existsEl, dataIndex, elOption, seriesModel, gro
   return el;
 }
 function doCreateOrUpdateEl(api, existsEl, dataIndex, elOption, seriesModel, group) {
-  if (process.env.NODE_ENV !== 'production') {
-    assert(elOption, 'should not have an null/undefined element setting');
-  }
   var toBeReplacedIdx = -1;
   var oldEl = existsEl;
   if (existsEl && doesElNeedRecreate(existsEl, elOption, seriesModel)
@@ -70809,9 +69699,6 @@ function doCreateOrUpdateClipPath(el, dataIndex, elOption, seriesModel, isInit) 
     }
     if (!clipPath) {
       clipPath = createEl$1(clipPathOpt);
-      if (process.env.NODE_ENV !== 'production') {
-        assert(isPath(clipPath), 'Only any type of `path` can be used in `clipPath`, rather than ' + clipPath.type + '.');
-      }
       el.setClipPath(clipPath);
     }
     updateElNormal(null, clipPath, dataIndex, clipPathOpt, null, seriesModel, isInit);
@@ -70892,10 +69779,6 @@ function processTxInfo(elOption, state, attachedTxInfo) {
     var txConOptNormal_1 = txConOpt;
     // `textContent: {type: 'text'}`, the "type" is easy to be missing. So we tolerate it.
     !txConOptNormal_1.type && (txConOptNormal_1.type = 'text');
-    if (process.env.NODE_ENV !== 'production') {
-      // Do not tolerate incorrcet type for forward compat.
-      assert(txConOptNormal_1.type === 'text', 'textContent.type must be "text"');
-    }
   }
   var info = !state ? attachedTxInfo.normal : attachedTxInfo[state];
   info.cfg = txCfg;
@@ -70968,9 +69851,6 @@ function mergeChildren(api, el, dataIndex, elOption, seriesModel) {
       }
       doCreateOrUpdateEl(api, oldChild, dataIndex, newChild, seriesModel, el);
     } else {
-      if (process.env.NODE_ENV !== 'production') {
-        assert(oldChild, 'renderItem should not return a group containing elements' + ' as null/undefined/{} if they do not exist before.');
-      }
       // If the new element option is null, it means to remove the old
       // element. But we cannot really remove the element from the group
       // directly, because the element order may not be stable when this
@@ -72734,11 +71614,6 @@ var polarCreator = {
     ecModel.eachSeries(function (seriesModel) {
       if (seriesModel.get('coordinateSystem') === 'polar') {
         var polarModel = seriesModel.getReferringComponents('polar', SINGLE_REFERRING).models[0];
-        if (process.env.NODE_ENV !== 'production') {
-          if (!polarModel) {
-            throw new Error('Polar "' + retrieve(seriesModel.get('polarIndex'), seriesModel.get('polarId'), 0) + '" not found');
-          }
-        }
         seriesModel.coordinateSystem = polarModel.coordinateSystem;
       }
     });
@@ -74654,9 +73529,6 @@ var Calendar = /** @class */function () {
       normalizedRange = range;
     }
     if (!normalizedRange) {
-      if (process.env.NODE_ENV !== 'production') {
-        logError('Invalid date range.');
-      }
       // Not handling it.
       return range;
     }
@@ -74844,11 +73716,6 @@ function parseCoordRangeOptionOnOneDim(locDimOut, reasonOut, clamp, data, dims, 
       parseCoordRangeOptionOnOneDimOnePart(locDimOut, reasonOut, coordValArr, hasClamp, dims, dimIdx, len - 1);
     }
   } else {
-    if (process.env.NODE_ENV !== 'production') {
-      if (reasonOut) {
-        reasonOut.push('Should be like [["x1", "x2"], ["y1", "y2"]], or ["x1", "y1"], rather than empty.');
-      }
-    }
     locDimOut[0] = locDimOut[1] = NaN;
   }
   if (hasClamp) {
@@ -74879,11 +73746,6 @@ function parseCoordRangeOptionOnOneDim(locDimOut, reasonOut, clamp, data, dims, 
 function parseCoordRangeOptionOnOneDimOnePart(locDimOut, reasonOut, coordValArr, hasClamp, dims, dimIdx, partIdx) {
   var layout = coordDataToAllCellLevelLayout(coordValArr[partIdx], dims, dimIdx);
   if (!layout) {
-    if (process.env.NODE_ENV !== 'production') {
-      if (!hasClamp && reasonOut) {
-        reasonOut.push("Can not find cell by coord[" + dimIdx + "][" + partIdx + "].");
-      }
-    }
     locDimOut[0] = locDimOut[1] = NaN;
     return;
   }
@@ -75044,9 +73906,6 @@ var MatrixDim = /** @class */function () {
     this._uniqueValueGen = createUniqueValueGenerator(dim);
     var dimModelData = dimModel.get('data', true);
     if (dimModelData != null && !isArray$1(dimModelData)) {
-      if (process.env.NODE_ENV !== 'production') {
-        error("Illegal echarts option - matrix." + this.dim + ".data must be an array if specified.");
-      }
       dimModelData = [];
     }
     if (dimModelData) {
@@ -75070,7 +73929,6 @@ var MatrixDim = /** @class */function () {
         return totalSpan;
       }
       each$f(dimModelData, function (option, optionIdx) {
-        var invalidOption = false;
         var cellOption;
         if (isString(option)) {
           cellOption = {
@@ -75079,7 +73937,6 @@ var MatrixDim = /** @class */function () {
         } else if (isObject$3(option)) {
           cellOption = option;
           if (option.value != null && !isString(option.value)) {
-            invalidOption = true;
             cellOption = {
               value: null
             };
@@ -75088,14 +73945,6 @@ var MatrixDim = /** @class */function () {
           cellOption = {
             value: null
           };
-          if (option != null) {
-            invalidOption = true;
-          }
-        }
-        if (invalidOption) {
-          if (process.env.NODE_ENV !== 'production') {
-            error("Illegal echarts option - matrix." + self.dim + ".data[" + optionIdx + "]" + ' must be `string | {value: string}`.');
-          }
         }
         var cell = {
           type: MatrixCellLayoutInfoType.nonLeaf,
@@ -75355,28 +74204,16 @@ var MatrixBodyCorner = /** @class */function () {
       var parsedList = [];
       var cellOptionList = self._model.getShallow('data');
       if (cellOptionList && !isArray$1(cellOptionList)) {
-        if (process.env.NODE_ENV !== 'production') {
-          error("matrix." + cellOptionList + ".data must be an array if specified.");
-        }
         cellOptionList = null;
       }
       each$f(cellOptionList, function (option, idx) {
         if (!isObject$3(option) || !isArray$1(option.coord)) {
-          if (process.env.NODE_ENV !== 'production') {
-            error("Illegal matrix." + self._kind + ".data[" + idx + "], must be a {coord: [...], ...}");
-          }
           return;
         }
         var locatorRange = resetXYLocatorRange([]);
         var reasonArr = null;
-        if (process.env.NODE_ENV !== 'production') {
-          reasonArr = [];
-        }
         parseCoordRangeOption(locatorRange, reasonArr, option.coord, self._dims, option.coordClamp ? MatrixClampOption[self._kind] : MatrixClampOption.none);
         if (isXYLocatorRangeInvalidOnDim(locatorRange, 0) || isXYLocatorRangeInvalidOnDim(locatorRange, 1)) {
-          if (process.env.NODE_ENV !== 'production') {
-            error("Can not determine cells by option matrix." + self._kind + ".data[" + idx + "]: " + ("" + reasonArr.join(' ')));
-          }
           return;
         }
         var cellMergeOwner = option && option.mergeCells;
@@ -75983,9 +74820,6 @@ var Matrix = /** @class */function () {
     outRect.x = outRect.y = outRect.width = outRect.height = NaN;
     var outLocRange = out.matrixXYLocatorRange = resetXYLocatorRange(out.matrixXYLocatorRange);
     if (!isArray$1(data)) {
-      if (process.env.NODE_ENV !== 'production') {
-        error('Input data must be an array in `convertToLayout`, `convertToPixel`');
-      }
       return out;
     }
     parseCoordRangeOption(outLocRange, null, data, dims, retrieve2(opt && opt.clamp, MatrixClampOption.none));
@@ -76329,10 +75163,6 @@ function mergeNewElOptionToExist(existList, index, newElOption) {
   var $action = newElOption.$action || 'merge';
   if ($action === 'merge') {
     if (existElOption) {
-      if (process.env.NODE_ENV !== 'production') {
-        var newType = newElOption.type;
-        assert(!newType || existElOption.type === newType, 'Please set $action: "replace" to change `type`');
-      }
       // We can ensure that newElOptCopy and existElOption are not
       // the same object, so `merge` will not change newElOptCopy.
       merge(existElOption, newElOptCopy, true);
@@ -76425,9 +75255,6 @@ var GraphicComponentModel = /** @class */function (_super) {
     var elOptionsToUpdate = this._elOptionsToUpdate = [];
     each$f(mappingResult, function (resultItem, index) {
       var newElOption = resultItem.newOption;
-      if (process.env.NODE_ENV !== 'production') {
-        assert(isObject$3(newElOption) || resultItem.existing, 'Empty graphic option definition');
-      }
       if (!newElOption) {
         return;
       }
@@ -76573,10 +75400,6 @@ var GraphicComponentView = /** @class */function (_super) {
       }
       // Remove unnecessary props to avoid potential problems.
       var elOptionCleaned = getCleanedElOption(elOption);
-      // For simple, do not support parent change, otherwise reorder is needed.
-      if (process.env.NODE_ENV !== 'production') {
-        elExisting && assert(targetElParent === elExisting.parent, 'Changing parent is not supported.');
-      }
       var $action = elOption.$action || 'merge';
       var isMerge = $action === 'merge';
       var isReplace = $action === 'replace';
@@ -76740,16 +75563,10 @@ var GraphicComponentView = /** @class */function (_super) {
   return GraphicComponentView;
 }(ComponentView);
 function newEl(graphicType) {
-  if (process.env.NODE_ENV !== 'production') {
-    assert(graphicType, 'graphic type MUST be set');
-  }
   var Clz = hasOwn(nonShapeGraphicElements, graphicType)
   // Those graphic elements are not shapes. They should not be
   // overwritten by users, so do them first.
   ? nonShapeGraphicElements[graphicType] : getShapeClass(graphicType);
-  if (process.env.NODE_ENV !== 'production') {
-    assert(Clz, "graphic type " + graphicType + " can not be found");
-  }
   var el = new Clz({});
   inner$7(el).type = graphicType;
   return el;
@@ -76866,9 +75683,6 @@ function isCoordSupported(seriesModel) {
   return indexOf(SERIES_COORDS, coordType) >= 0;
 }
 function getAxisMainType(axisDim) {
-  if (process.env.NODE_ENV !== 'production') {
-    assert(axisDim);
-  }
   return axisDim + 'Axis';
 }
 /**
@@ -77234,9 +76048,6 @@ var DataZoomModel = /** @class */function (_super) {
    * @return If not found, return null/undefined.
    */
   DataZoomModel.prototype.getAxisModel = function (axisDim, axisIndex) {
-    if (process.env.NODE_ENV !== 'production') {
-      assert(axisDim && axisIndex != null);
-    }
     var axisInfo = this._targetAxisInfoMap.get(axisDim);
     if (axisInfo && axisInfo.indexMap[axisIndex]) {
       return this.ecModel.getComponent(getAxisMainType(axisDim), axisIndex);
@@ -77325,10 +76136,6 @@ var DataZoomModel = /** @class */function (_super) {
     return this._rangePropMode.slice();
   };
   DataZoomModel.prototype.getOrient = function () {
-    if (process.env.NODE_ENV !== 'production') {
-      // Should not be called before initialized.
-      assert(this._orient);
-    }
     return this._orient;
   };
   DataZoomModel.type = 'dataZoom';
@@ -78705,10 +77512,6 @@ var DataView = /** @class */function (_super) {
     addEventListener(closeButton, 'click', close);
     addEventListener(refreshButton, 'click', function () {
       if (contentToOption == null && optionToContent != null || contentToOption != null && optionToContent == null) {
-        if (process.env.NODE_ENV !== 'production') {
-          // eslint-disable-next-line
-          warn('It seems you have just provided one of `contentToOption` and `optionToContent` functions but missed the other one. Data change is ignored.');
-        }
         close();
         return;
       }
@@ -78985,10 +77788,6 @@ var BrushTargetManager = /** @class */function () {
   BrushTargetManager.prototype.setInputRanges = function (areas, ecModel) {
     each$f(areas, function (area) {
       var targetInfo = this.findTargetInfo(area, ecModel);
-      if (process.env.NODE_ENV !== 'production') {
-        assert(!targetInfo || targetInfo === true || area.coordRange, 'coordRange must be specified when coord index specified.');
-        assert(!targetInfo || targetInfo !== true || area.range, 'range must be specified in global brush.');
-      }
       area.range = area.range || [];
       // convert coordRange to global range and set panelId.
       if (targetInfo && targetInfo !== true) {
@@ -79178,9 +77977,6 @@ var coordConvert = {
   }
 };
 function axisConvert(axisNameIndex, to, coordSys, rangeOrCoordRange) {
-  if (process.env.NODE_ENV !== 'production') {
-    assert(coordSys.type === 'cartesian2d', 'lineX/lineY brush is available only in cartesian2d.');
-  }
   var axis = coordSys.getAxis(['x', 'y'][axisNameIndex]);
   var values = formatMinMax(map$1([0, 1], function (i) {
     return to ? axis.coordToData(axis.toLocalCoord(rangeOrCoordRange[i]), true) : axis.toGlobalCoord(axis.dataToCoord(rangeOrCoordRange[i]));
@@ -79940,7 +78736,7 @@ var TooltipRichContent = /** @class */function () {
   TooltipRichContent.prototype.setContent = function (content, markupStyleCreator, tooltipModel, borderColor, arrowPosition) {
     var _this = this;
     if (isObject$3(content)) {
-      throwError(process.env.NODE_ENV !== 'production' ? 'Passing DOM nodes as content is not supported in richText tooltip!' : '');
+      throwError('');
     }
     if (this.el) {
       this._zr.remove(this.el);
@@ -81457,12 +80253,6 @@ var BrushModel = /** @class */function (_super) {
    * If `areas` is null/undefined, range state remain.
    */
   BrushModel.prototype.setAreas = function (areas) {
-    if (process.env.NODE_ENV !== 'production') {
-      assert(isArray$1(areas));
-      each$f(areas, function (area) {
-        assert(area.brushType, 'Illegal areas');
-      });
-    }
     // If areas is null/undefined, range state remain.
     // This helps user to dispatchAction({type: 'brush'}) with no areas
     // set but just want to get the current brush select info from a `brush` event.
@@ -82844,11 +81634,6 @@ var MarkerModel = /** @class */function (_super) {
    * @overrite
    */
   MarkerModel.prototype.init = function (option, parentModel, ecModel) {
-    if (process.env.NODE_ENV !== 'production') {
-      if (this.type === 'marker') {
-        throw new Error('Marker component is abstract component. Use markLine, markPoint, markArea instead.');
-      }
-    }
     this.mergeDefaultAndTheme(option, ecModel);
     this._mergeOption(option, ecModel, false, true);
   };
@@ -83445,10 +82230,6 @@ var markLineTransform = function (seriesModel, coordSys, mlModel, item) {
         value: value
       }];
     } else {
-      // Invalid data
-      if (process.env.NODE_ENV !== 'production') {
-        logError('Invalid markLine data.');
-      }
       itemArray = [];
     }
   } else {
@@ -84522,11 +83303,6 @@ var LegendView = /** @class */function (_super) {
             legendDrawnMap.set(name, true);
           }
         }, this);
-      }
-      if (process.env.NODE_ENV !== 'production') {
-        if (!legendDrawnMap.get(name)) {
-          console.warn(name + ' series not exists. Legend data should be same with series name or data name.');
-        }
       }
     }, this);
     if (selector) {
@@ -86296,9 +85072,6 @@ var SliderZoomView = /** @class */function (_super) {
       if (!symbolBuildProxies[iconStr] && iconStr.indexOf('path://') < 0 && iconStr.indexOf('image://') < 0) {
         // Compatitable with the old icon parsers. Which can use a path string without path://
         iconStr = 'path://' + iconStr;
-        if (process.env.NODE_ENV !== 'production') {
-          deprecateLog('handleIcon now needs \'path://\' prefix when using a path string');
-        }
       }
       var path = createSymbol$1(iconStr, -1, 0, 2, 2, null, true);
       path.attr({
@@ -88630,11 +87403,6 @@ var resetMethods = {
         }
         useMinMax[0] && interval[1] === Infinity && (close_1[0] = 0);
         useMinMax[1] && interval[0] === -Infinity && (close_1[1] = 0);
-        if (process.env.NODE_ENV !== 'production') {
-          if (interval[0] > interval[1]) {
-            console.warn('Piece ' + index + 'is illegal: ' + interval + ' lower bound should not greater then uppper bound.');
-          }
-        }
         if (interval[0] === interval[1] && close_1[0] && close_1[1]) {
           // Consider: [{min: 5, max: 5, visual: {...}}, {min: 0, max: 5}],
           // we use value to lift the priority when min === max
@@ -88920,9 +87688,6 @@ var ThumbnailModel = /** @class */function (_super) {
     if (series) {
       if (series.subType !== 'graph') {
         series = null;
-        if (process.env.NODE_ENV !== 'production') {
-          error("series." + series.subType + " is not supported in thumbnail.", true);
-        }
       }
     } else {
       // If no xxxId and xxxIndex specified, find the first series.graph. If other components,
@@ -89442,9 +88207,6 @@ var RegExpEvaluator = /** @class */function () {
     var condValue = this._condVal = isString(rVal) ? new RegExp(rVal) : isRegExp(rVal) ? rVal : null;
     if (condValue == null) {
       var errMsg = '';
-      if (process.env.NODE_ENV !== 'production') {
-        errMsg = makePrintable('Illegal regexp', rVal, 'in');
-      }
       throwError(errMsg);
     }
   }
@@ -89520,9 +88282,6 @@ function parseOption(exprOption, getters) {
   }
   var errMsg = '';
   if (!isObjectNotArray(exprOption)) {
-    if (process.env.NODE_ENV !== 'production') {
-      errMsg = makePrintable('Illegal config. Expect a plain object but actually', exprOption);
-    }
     throwError(errMsg);
   }
   if (exprOption.and) {
@@ -89537,9 +88296,6 @@ function parseOption(exprOption, getters) {
 function parseAndOrOption(op, exprOption, getters) {
   var subOptionArr = exprOption[op];
   var errMsg = '';
-  if (process.env.NODE_ENV !== 'production') {
-    errMsg = makePrintable('"and"/"or" condition should only be `' + op + ': [...]` and must not be empty array.', 'Illegal condition:', exprOption);
-  }
   if (!isArray$1(subOptionArr)) {
     throwError(errMsg);
   }
@@ -89558,9 +88314,6 @@ function parseAndOrOption(op, exprOption, getters) {
 function parseNotOption(exprOption, getters) {
   var subOption = exprOption.not;
   var errMsg = '';
-  if (process.env.NODE_ENV !== 'production') {
-    errMsg = makePrintable('"not" condition should only be `not: {}`.', 'Illegal condition:', exprOption);
-  }
   if (!isObjectNotArray(subOption)) {
     throwError(errMsg);
   }
@@ -89588,17 +88341,11 @@ function parseRelationalOption(exprOption, getters) {
     var condValueParsed = valueParser ? valueParser(condValueRaw) : condValueRaw;
     var evaluator = createFilterComparator(op, condValueParsed) || op === 'reg' && new RegExpEvaluator(condValueParsed);
     if (!evaluator) {
-      if (process.env.NODE_ENV !== 'production') {
-        errMsg = makePrintable('Illegal relational operation: "' + keyRaw + '" in condition:', exprOption);
-      }
       throwError(errMsg);
     }
     subCondList.push(evaluator);
   }
   if (!subCondList.length) {
-    if (process.env.NODE_ENV !== 'production') {
-      errMsg = makePrintable('Relational condition must have at least one operator.', 'Illegal condition:', exprOption);
-    }
     // No relational operator always disabled in case of dangers result.
     throwError(errMsg);
   }
@@ -89643,16 +88390,10 @@ var filterTransform = {
         var errMsg = '';
         var dimLoose = exprOption.dimension;
         if (!hasOwn(exprOption, 'dimension')) {
-          if (process.env.NODE_ENV !== 'production') {
-            errMsg = makePrintable('Relation condition must has prop "dimension" specified.', 'Illegal condition:', exprOption);
-          }
           throwError(errMsg);
         }
         var dimInfo = upstream.getDimensionInfo(dimLoose);
         if (!dimInfo) {
-          if (process.env.NODE_ENV !== 'production') {
-            errMsg = makePrintable('Can not find dimension info via: ' + dimLoose + '.\n', 'Existing dimensions: ', upstream.cloneAllDimensionInfo(), '.\n', 'Illegal condition:', exprOption, '.\n');
-          }
           throwError(errMsg);
         }
         return {
@@ -89676,10 +88417,6 @@ var filterTransform = {
   }
 };
 
-var sampleLog = '';
-if (process.env.NODE_ENV !== 'production') {
-  sampleLog = ['Valid config is like:', '{ dimension: "age", order: "asc" }', 'or [{ dimension: "age", order: "asc"], { dimension: "date", order: "desc" }]'].join(' ');
-}
 var sortTransform = {
   type: 'echarts:sort',
   transform: function (params) {
@@ -89692,9 +88429,6 @@ var sortTransform = {
     //     : [config as OrderExpression];
     var orderExprList = normalizeToArray(config);
     if (!orderExprList.length) {
-      if (process.env.NODE_ENV !== 'production') {
-        errMsg = 'Empty `config` in sort transform.';
-      }
       throwError(errMsg);
     }
     var orderDefList = [];
@@ -89704,43 +88438,25 @@ var sortTransform = {
       var parserName = orderExpr.parser;
       var incomparable = orderExpr.incomparable;
       if (dimLoose == null) {
-        if (process.env.NODE_ENV !== 'production') {
-          errMsg = 'Sort transform config must has "dimension" specified.' + sampleLog;
-        }
         throwError(errMsg);
       }
       if (order !== 'asc' && order !== 'desc') {
-        if (process.env.NODE_ENV !== 'production') {
-          errMsg = 'Sort transform config must has "order" specified.' + sampleLog;
-        }
         throwError(errMsg);
       }
       if (incomparable && incomparable !== 'min' && incomparable !== 'max') {
         var errMsg_1 = '';
-        if (process.env.NODE_ENV !== 'production') {
-          errMsg_1 = 'incomparable must be "min" or "max" rather than "' + incomparable + '".';
-        }
         throwError(errMsg_1);
       }
       if (order !== 'asc' && order !== 'desc') {
         var errMsg_2 = '';
-        if (process.env.NODE_ENV !== 'production') {
-          errMsg_2 = 'order must be "asc" or "desc" rather than "' + order + '".';
-        }
         throwError(errMsg_2);
       }
       var dimInfo = upstream.getDimensionInfo(dimLoose);
       if (!dimInfo) {
-        if (process.env.NODE_ENV !== 'production') {
-          errMsg = makePrintable('Can not find dimension info via: ' + dimLoose + '.\n', 'Existing dimensions: ', upstream.cloneAllDimensionInfo(), '.\n', 'Illegal config:', orderExpr, '.\n');
-        }
         throwError(errMsg);
       }
       var parser = parserName ? getRawValueParser(parserName) : null;
       if (parserName && !parser) {
-        if (process.env.NODE_ENV !== 'production') {
-          errMsg = makePrintable('Invalid parser name ' + parserName + '.\n', 'Illegal config:', orderExpr, '.\n');
-        }
         throwError(errMsg);
       }
       orderDefList.push({
@@ -89752,9 +88468,6 @@ var sortTransform = {
     // TODO: support it?
     var sourceFormat = upstream.sourceFormat;
     if (sourceFormat !== SOURCE_FORMAT_ARRAY_ROWS && sourceFormat !== SOURCE_FORMAT_OBJECT_ROWS) {
-      if (process.env.NODE_ENV !== 'production') {
-        errMsg = 'sourceFormat "' + sourceFormat + '" is not supported yet';
-      }
       throwError(errMsg);
     }
     // Other upstream format are all array.
@@ -91117,9 +89830,6 @@ function flattenDataDiffItems(list) {
     var data = seriesInfo.data;
     var dataGroupId = seriesInfo.dataGroupId;
     if (data.count() > DATA_COUNT_THRESHOLD) {
-      if (process.env.NODE_ENV !== 'production') {
-        warn('Universal transition is disabled on large data > 10k.');
-      }
       return;
     }
     var indices = data.getIndices();
@@ -91472,11 +90182,6 @@ function findTransitionSeriesBatches(globalStore, params) {
       });
     }
   });
-  function checkTransitionSeriesKeyDuplicated(transitionKeyStr) {
-    if (updateBatches.get(transitionKeyStr)) {
-      warn("Duplicated seriesKey in universalTransition " + transitionKeyStr);
-    }
-  }
   each$f(params.updatedSeries, function (series) {
     if (series.isUniversalTransitionEnabled() && series.isAnimationEnabled()) {
       var newDataGroupId = series.get('dataGroupId');
@@ -91487,9 +90192,6 @@ function findTransitionSeriesBatches(globalStore, params) {
       var oldData = oldDataMap.get(transitionKeyStr);
       // string transition key is the best match.
       if (oldData) {
-        if (process.env.NODE_ENV !== 'production') {
-          checkTransitionSeriesKeyDuplicated(transitionKeyStr);
-        }
         // TODO check if data is same?
         updateBatches.set(transitionKeyStr, {
           oldSeries: [{
@@ -91507,9 +90209,6 @@ function findTransitionSeriesBatches(globalStore, params) {
         // Transition from multiple series.
         // e.g. 'female', 'male' -> ['female', 'male']
         if (isArray$1(transitionKey)) {
-          if (process.env.NODE_ENV !== 'production') {
-            checkTransitionSeriesKeyDuplicated(transitionKeyStr);
-          }
           var oldSeries_1 = [];
           each$f(transitionKey, function (key) {
             var oldData = oldDataMap.get(key);
@@ -91703,10 +90402,6 @@ var ScaleBreakContextImpl = /** @class */function () {
       var brk = this.breaks[idx];
       if (brk.vmin < tickVal && tickVal < brk.vmax) {
         var multiple = estimateNiceMultiple(tickVal, brk.vmax);
-        if (process.env.NODE_ENV !== 'production') {
-          // If not, it may cause dead loop or not nice tick.
-          assert(multiple >= 0 && Math.round(multiple) === multiple);
-        }
         return multiple;
       }
     }
@@ -92024,16 +90719,10 @@ breakOptionList, parse, opt) {
       // Avoid division error.
       return true;
     }
-    if (process.env.NODE_ENV !== 'production') {
-      error(msg + " must be >= 0 and < 1, rather than " + normalizedPercent + " .");
-    }
     return false;
   }
   each$f(breakOptionList, function (brkOption) {
     if (!brkOption || brkOption.start == null || brkOption.end == null) {
-      if (process.env.NODE_ENV !== 'production') {
-        error('The input axis breaks start/end should not be empty.');
-      }
       return;
     }
     if (brkOption.isExpanded) {
@@ -92055,7 +90744,7 @@ breakOptionList, parse, opt) {
         var trimmedGap = trim$1(brkOption.gap);
         if (trimmedGap.match(/%$/)) {
           var normalizedPercent = parseFloat(trimmedGap) / 100;
-          if (!validatePercent(normalizedPercent, 'Percent gap')) {
+          if (!validatePercent(normalizedPercent)) {
             normalizedPercent = 0;
           }
           parsedBrk.gapParsed.type = 'tpPrct';
@@ -92066,9 +90755,6 @@ breakOptionList, parse, opt) {
       if (!isPrct) {
         var absolute = parse(brkOption.gap);
         if (!isFinite(absolute) || absolute < 0) {
-          if (process.env.NODE_ENV !== 'production') {
-            error("Axis breaks gap must positive finite rather than (" + brkOption.gap + ").");
-          }
           absolute = 0;
         }
         parsedBrk.gapParsed.type = 'tpAbs';
@@ -92082,9 +90768,6 @@ breakOptionList, parse, opt) {
     if (opt && opt.noNegative) {
       each$f(['vmin', 'vmax'], function (se) {
         if (parsedBrk[se] < 0) {
-          if (process.env.NODE_ENV !== 'production') {
-            error("Axis break." + se + " must not be negative.");
-          }
           parsedBrk[se] = 0;
         }
       });
@@ -92106,9 +90789,6 @@ breakOptionList, parse, opt) {
   var lastEnd = -Infinity;
   each$f(parsedBreaks, function (brk, idx) {
     if (lastEnd > brk.vmin) {
-      if (process.env.NODE_ENV !== 'production') {
-        error('Axis breaks must not overlap.');
-      }
       parsedBreaks[idx] = null;
     }
     lastEnd = brk.vmax;
@@ -92639,9 +91319,6 @@ function updateModelAxisBreak(model, payload) {
       return getScaleBreakHelper().identifyAxisBreak(brkOption, inputBrk);
     });
     if (!breakOption) {
-      if (process.env.NODE_ENV !== 'production') {
-        warn("Can not find axis break by start: " + inputBrk.start + ", end: " + inputBrk.end);
-      }
       return;
     }
     var actionType = payload.type;
@@ -94105,6 +92782,399 @@ MyTasksView = __decorate([
     t("task-manager-my-tasks-view")
 ], MyTasksView);
 
+function formatSeenAt(value) {
+    const timestamp = new Date(value);
+    if (Number.isNaN(timestamp.getTime())) {
+        return value;
+    }
+    return timestamp.toLocaleString([], {
+        dateStyle: "medium",
+        timeStyle: "short",
+    });
+}
+let SetupView = class SetupView extends i$1 {
+    constructor() {
+        super(...arguments);
+        this.haUsers = [];
+        this.profiles = [];
+        this.mappings = [];
+        this.unmappedTags = [];
+        this.tasks = [];
+        this.errorMessage = "";
+        this.busy = false;
+        this.loading = false;
+        this.watchingForScan = false;
+        this.handleWatchToggle = () => {
+            if (this.busy || this.loading) {
+                return;
+            }
+            this.dispatchEvent(new CustomEvent(this.watchingForScan ? "stop-nfc-watch-request" : "start-nfc-watch-request", {
+                bubbles: true,
+                composed: true,
+            }));
+        };
+    }
+    render() {
+        if (this.loading) {
+            return b `<div class="loading">Loading setup data...</div>`;
+        }
+        if (this.errorMessage) {
+            return b `
+        <div class="error" role="alert">
+          <strong>Unable to load setup data.</strong>
+          <span>${this.errorMessage}</span>
+        </div>
+      `;
+        }
+        const mappedUserIds = new Set(this.mappings.map((mapping) => mapping.ha_user_id));
+        const profileNames = new Map(this.profiles.map((profile) => [profile.id, profile.display_name]));
+        const userNames = new Map(this.haUsers.map((user) => [user.id, user.name]));
+        const importableUsers = this.haUsers
+            .filter((user) => user.is_active && !user.system_generated && !mappedUserIds.has(user.id))
+            .slice()
+            .sort((left, right) => left.name.localeCompare(right.name));
+        const linkableTasks = this.tasks
+            .filter((task) => task.active)
+            .slice()
+            .sort((left, right) => left.title.localeCompare(right.title));
+        return b `
+      <div class="setup-grid">
+        <section class="panel">
+          <div>
+            <h3>Mapped Users</h3>
+            <p>Existing Home Assistant user links that power assignment-aware completion.</p>
+          </div>
+          ${this.mappings.length === 0
+            ? b `<div class="empty">No Home Assistant users have been mapped yet.</div>`
+            : b `
+                <div class="list">
+                  ${this.mappings.map((mapping) => b `
+                      <div class="row">
+                        <div class="meta">
+                          <strong>${profileNames.get(mapping.profile_id) ?? mapping.profile_id}</strong>
+                          <span>${userNames.get(mapping.ha_user_id) ?? mapping.ha_user_id}</span>
+                        </div>
+                      </div>
+                    `)}
+                </div>
+              `}
+        </section>
+
+        <section class="panel">
+          <div>
+            <h3>Importable HA Users</h3>
+            <p>Bring unmapped Home Assistant users into the household profile list.</p>
+          </div>
+          ${this.busy ? b `<p class="status">Saving setup changes...</p>` : b ``}
+          ${importableUsers.length === 0
+            ? b `<div class="empty">All available Home Assistant users are already mapped.</div>`
+            : b `
+                <div class="list">
+                  ${importableUsers.map((user) => b `
+                      <div class="row">
+                        <div class="meta">
+                          <strong>${user.name}</strong>
+                          <span>${user.is_admin ? "Administrator" : "Standard user"}</span>
+                        </div>
+                        <button
+                          class="action"
+                          type="button"
+                          data-import-user-id=${user.id}
+                          ?disabled=${this.busy}
+                          @click=${() => this.handleImportUser(user.id)}
+                        >
+                          Import
+                        </button>
+                      </div>
+                    `)}
+                </div>
+              `}
+        </section>
+
+        <section class="panel">
+          <div>
+            <h3>Discovered NFC Tags</h3>
+            <p>Link newly seen tags to tasks so scans can start the confirmation flow.</p>
+          </div>
+          <div class="watch-row">
+            <div class="watch-copy">
+              <strong>${this.watchingForScan ? "Listening for a scan" : "Watch for next scan"}</strong>
+              <span>
+                ${this.watchingForScan
+            ? "Listening for the next NFC scan. Scan an unmapped tag now."
+            : "Keep this panel open and start watching to refresh discoveries when a new unmapped tag is scanned."}
+              </span>
+            </div>
+            <button
+              class="action"
+              type="button"
+              data-watch-toggle
+              ?disabled=${this.busy || this.loading}
+              @click=${this.handleWatchToggle}
+            >
+              ${this.watchingForScan ? "Stop Watching" : "Watch for Next Scan"}
+            </button>
+          </div>
+          ${this.unmappedTags.length === 0
+            ? b `<div class="empty">No unmapped NFC tags have been discovered yet.</div>`
+            : b `
+                <div class="list">
+                  ${this.unmappedTags.map((tag) => b `
+                      <div class="row">
+                        <div class="meta">
+                          <strong>${tag.tag_id}</strong>
+                          <span>
+                            Last seen ${formatSeenAt(tag.last_seen)} via
+                            ${tag.last_source === "nfc_reader" ? "reader" : "phone"}
+                          </span>
+                        </div>
+                        <select
+                          data-link-tag-id=${tag.tag_id}
+                          ?disabled=${this.busy || linkableTasks.length === 0}
+                          @change=${(event) => this.handleLinkTag(event, tag.tag_id)}
+                        >
+                          <option value="">
+                            ${linkableTasks.length === 0 ? "Create a task first" : "Link to task"}
+                          </option>
+                          ${linkableTasks.map((task) => b `<option value=${task.id}>${task.title}</option>`)}
+                        </select>
+                      </div>
+                    `)}
+                </div>
+              `}
+        </section>
+      </div>
+    `;
+    }
+    handleImportUser(haUserId) {
+        if (this.busy) {
+            return;
+        }
+        this.dispatchEvent(new CustomEvent("import-ha-user-request", {
+            detail: { haUserId },
+            bubbles: true,
+            composed: true,
+        }));
+    }
+    handleLinkTag(event, tagId) {
+        if (this.busy) {
+            return;
+        }
+        const target = event.currentTarget;
+        if (!target.value) {
+            return;
+        }
+        this.dispatchEvent(new CustomEvent("link-nfc-tag-request", {
+            detail: { tagId, taskId: target.value },
+            bubbles: true,
+            composed: true,
+        }));
+        target.value = "";
+    }
+};
+SetupView.styles = i$4 `
+    :host {
+      display: block;
+    }
+
+    .setup-grid {
+      display: grid;
+      gap: 18px;
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    }
+
+    .panel {
+      display: grid;
+      gap: 14px;
+      padding: 18px;
+      border-radius: 22px;
+      border: 1px solid rgba(44, 67, 49, 0.08);
+      background: linear-gradient(180deg, rgba(255, 255, 255, 0.94), rgba(244, 247, 240, 0.98));
+      box-shadow: 0 14px 30px rgba(34, 48, 36, 0.05);
+    }
+
+    h3 {
+      margin: 0;
+      color: #203024;
+      font-size: 1.05rem;
+    }
+
+    p {
+      margin: 0;
+      color: #627362;
+      line-height: 1.55;
+    }
+
+    .list {
+      display: grid;
+      gap: 10px;
+    }
+
+    .row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 14px;
+      border-radius: 18px;
+      border: 1px solid rgba(44, 67, 49, 0.08);
+      background: rgba(250, 251, 248, 0.9);
+    }
+
+    .meta {
+      min-width: 0;
+      display: grid;
+      gap: 4px;
+    }
+
+    .meta strong {
+      color: #203024;
+      word-break: break-word;
+    }
+
+    .meta span {
+      color: #6a7a6c;
+      font-size: 0.92rem;
+      word-break: break-word;
+    }
+
+    .action,
+    select {
+      appearance: none;
+      border: 1px solid rgba(44, 67, 49, 0.12);
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.95);
+      color: #294132;
+      font: inherit;
+    }
+
+    .action {
+      cursor: pointer;
+      font-weight: 700;
+      padding: 10px 16px;
+      white-space: nowrap;
+    }
+
+    select {
+      min-width: 168px;
+      padding: 10px 14px;
+    }
+
+    .empty {
+      padding: 22px;
+      border-radius: 20px;
+      border: 1px dashed rgba(47, 76, 53, 0.18);
+      background: rgba(244, 247, 240, 0.8);
+      color: #536553;
+      text-align: center;
+    }
+
+    .status {
+      font-weight: 600;
+      color: #476048;
+    }
+
+    .watch-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 14px;
+      border-radius: 18px;
+      border: 1px solid rgba(44, 67, 49, 0.08);
+      background: rgba(248, 250, 245, 0.92);
+    }
+
+    .watch-copy {
+      display: grid;
+      gap: 4px;
+      min-width: 0;
+    }
+
+    .watch-copy strong {
+      color: #203024;
+    }
+
+    .watch-copy span {
+      color: #627362;
+      font-size: 0.92rem;
+      line-height: 1.5;
+    }
+
+    .loading {
+      padding: 28px;
+      border-radius: 20px;
+      border: 1px dashed rgba(47, 76, 53, 0.18);
+      background: rgba(244, 247, 240, 0.8);
+      color: #476048;
+      text-align: center;
+      font-weight: 600;
+    }
+
+    .error {
+      display: grid;
+      gap: 10px;
+      padding: 22px;
+      border-radius: 20px;
+      border: 1px solid rgba(160, 67, 48, 0.18);
+      background: rgba(196, 99, 76, 0.08);
+      color: #7f3123;
+    }
+
+    .error strong {
+      font-size: 1rem;
+    }
+
+    button:disabled,
+    select:disabled {
+      opacity: 0.65;
+      cursor: wait;
+    }
+
+    @media (max-width: 640px) {
+      .row {
+        flex-direction: column;
+        align-items: stretch;
+      }
+
+      select,
+      .action {
+        width: 100%;
+        box-sizing: border-box;
+      }
+    }
+  `;
+__decorate([
+    n({ attribute: false })
+], SetupView.prototype, "haUsers", void 0);
+__decorate([
+    n({ attribute: false })
+], SetupView.prototype, "profiles", void 0);
+__decorate([
+    n({ attribute: false })
+], SetupView.prototype, "mappings", void 0);
+__decorate([
+    n({ attribute: false })
+], SetupView.prototype, "unmappedTags", void 0);
+__decorate([
+    n({ attribute: false })
+], SetupView.prototype, "tasks", void 0);
+__decorate([
+    n()
+], SetupView.prototype, "errorMessage", void 0);
+__decorate([
+    n({ type: Boolean })
+], SetupView.prototype, "busy", void 0);
+__decorate([
+    n({ type: Boolean })
+], SetupView.prototype, "loading", void 0);
+__decorate([
+    n({ type: Boolean })
+], SetupView.prototype, "watchingForScan", void 0);
+SetupView = __decorate([
+    t("task-manager-setup-view")
+], SetupView);
+
 const NEW_TASK_ID = "__new__";
 function todayIso$1() {
     const now = new Date();
@@ -94155,12 +93225,18 @@ let TaskBuilderView = class TaskBuilderView extends i$1 {
         super(...arguments);
         this.tasks = [];
         this.profiles = [];
+        this.profileMappings = [];
+        this.haUsers = [];
+        this.unmappedTags = [];
+        this.handoffTaskId = "";
+        this.draftContextKey = "";
         this.saving = false;
         this.statusMessage = "";
         this.errorMessage = "";
         this.selectedTaskId = NEW_TASK_ID;
         this.formState = emptyFormState([]);
         this.localError = "";
+        this.lastAppliedHandoffTaskId = "";
         this.addSkipWindow = () => {
             this.localError = "";
             this.formState = {
@@ -94178,11 +93254,45 @@ let TaskBuilderView = class TaskBuilderView extends i$1 {
         };
     }
     willUpdate(changedProperties) {
+        if (changedProperties.has("draftContextKey") && this.selectedTaskId === NEW_TASK_ID) {
+            this.localError = "";
+            this.formState = emptyFormState(this.profiles);
+        }
+        if ((changedProperties.has("handoffTaskId") || changedProperties.has("tasks")) &&
+            this.handoffTaskId &&
+            this.handoffTaskId !== this.lastAppliedHandoffTaskId) {
+            const handoffTask = this.tasks.find((task) => task.id === this.handoffTaskId);
+            if (handoffTask) {
+                this.selectedTaskId = handoffTask.id;
+                this.localError = "";
+                this.formState = formStateFromTask(handoffTask);
+                this.lastAppliedHandoffTaskId = handoffTask.id;
+            }
+        }
         if (changedProperties.has("profiles") && !this.formState.assignedProfileId) {
             this.formState = {
                 ...this.formState,
                 assignedProfileId: this.profiles[0]?.id ?? "",
             };
+        }
+        if (this.selectedTaskId === NEW_TASK_ID &&
+            (changedProperties.has("profiles") || changedProperties.has("unmappedTags"))) {
+            const profileIds = new Set(this.profiles.map((profile) => profile.id));
+            const nextAssignedProfileId = profileIds.has(this.formState.assignedProfileId)
+                ? this.formState.assignedProfileId
+                : this.profiles[0]?.id ?? "";
+            const availableTagIds = new Set(this.unmappedTags.map((tag) => tag.tag_id));
+            const nextNfcTagId = this.formState.nfcTagId && availableTagIds.has(this.formState.nfcTagId)
+                ? this.formState.nfcTagId
+                : "";
+            if (nextAssignedProfileId !== this.formState.assignedProfileId ||
+                nextNfcTagId !== this.formState.nfcTagId) {
+                this.formState = {
+                    ...this.formState,
+                    assignedProfileId: nextAssignedProfileId,
+                    nfcTagId: nextNfcTagId,
+                };
+            }
         }
         if (changedProperties.has("tasks")) {
             const selectedTask = this.tasks.find((task) => task.id === this.selectedTaskId);
@@ -94234,8 +93344,15 @@ let TaskBuilderView = class TaskBuilderView extends i$1 {
               </label>
               <label>
                 Assigned profile
-                <select .value=${this.formState.assignedProfileId} @change=${this.handleTextInput("assignedProfileId")} required>
-                  ${this.profiles.map((profile) => b `<option value=${profile.id}>${profile.display_name}</option>`)}
+                <select
+                  data-assignee-select
+                  .value=${this.formState.assignedProfileId}
+                  @change=${this.handleTextInput("assignedProfileId")}
+                  required
+                >
+                  ${this.profiles.map((profile) => b `
+                      <option value=${profile.id}>${this.renderProfileLabel(profile)}</option>
+                    `)}
                 </select>
               </label>
             </div>
@@ -94249,8 +93366,15 @@ let TaskBuilderView = class TaskBuilderView extends i$1 {
                 <input type="date" .value=${this.formState.startDate} @input=${this.handleTextInput("startDate")} required />
               </label>
               <label>
-                NFC tag ID
-                <input .value=${this.formState.nfcTagId} @input=${this.handleTextInput("nfcTagId")} placeholder="Optional" />
+                NFC tag
+                <select
+                  data-nfc-tag-select
+                  .value=${this.formState.nfcTagId}
+                  @change=${this.handleTextInput("nfcTagId")}
+                >
+                  <option value="">Optional</option>
+                  ${this.availableNfcTagIds.map((tagId) => b `<option value=${tagId}>${tagId}</option>`)}
+                </select>
               </label>
             </div>
             <label>
@@ -94443,6 +93567,33 @@ let TaskBuilderView = class TaskBuilderView extends i$1 {
                 [field]: target.value,
             };
         };
+    }
+    renderProfileLabel(profile) {
+        const mapping = this.profileMappings.find((candidate) => candidate.profile_id === profile.id);
+        if (!mapping) {
+            return profile.display_name;
+        }
+        const haUser = this.haUsers.find((candidate) => candidate.id === mapping.ha_user_id);
+        if (!haUser) {
+            return profile.display_name;
+        }
+        return `${profile.display_name} (${haUser.name})`;
+    }
+    get availableNfcTagIds() {
+        const seenTagIds = new Set();
+        const tagIds = [];
+        if (this.formState.nfcTagId) {
+            seenTagIds.add(this.formState.nfcTagId);
+            tagIds.push(this.formState.nfcTagId);
+        }
+        for (const tag of this.unmappedTags) {
+            if (seenTagIds.has(tag.tag_id)) {
+                continue;
+            }
+            seenTagIds.add(tag.tag_id);
+            tagIds.push(tag.tag_id);
+        }
+        return tagIds;
     }
     handleNumberInput(field) {
         return (event) => {
@@ -94769,6 +93920,21 @@ __decorate([
     n({ attribute: false })
 ], TaskBuilderView.prototype, "profiles", void 0);
 __decorate([
+    n({ attribute: false })
+], TaskBuilderView.prototype, "profileMappings", void 0);
+__decorate([
+    n({ attribute: false })
+], TaskBuilderView.prototype, "haUsers", void 0);
+__decorate([
+    n({ attribute: false })
+], TaskBuilderView.prototype, "unmappedTags", void 0);
+__decorate([
+    n({ attribute: false })
+], TaskBuilderView.prototype, "handoffTaskId", void 0);
+__decorate([
+    n()
+], TaskBuilderView.prototype, "draftContextKey", void 0);
+__decorate([
     n({ type: Boolean })
 ], TaskBuilderView.prototype, "saving", void 0);
 __decorate([
@@ -94790,6 +93956,7 @@ TaskBuilderView = __decorate([
     t("task-manager-task-builder-view")
 ], TaskBuilderView);
 
+const SETUP_DISCOVERY_WATCH_INTERVAL_MS = 1500;
 const NAVIGATION_TABS = [
     {
         id: "my-tasks",
@@ -94810,6 +93977,11 @@ const NAVIGATION_TABS = [
         id: "admin",
         label: "Manage Tasks",
         description: "Create and update recurring household tasks."
+    },
+    {
+        id: "setup",
+        label: "Setup",
+        description: "Import Home Assistant users and link discovered NFC tags."
     }
 ];
 function todayIso() {
@@ -94833,6 +94005,10 @@ function errorMessage(error) {
     }
     return String(error);
 }
+function upsertTask(tasks, savedTask, requestedTaskId) {
+    const retainedTasks = tasks.filter((task) => task.id !== savedTask.id && task.id !== requestedTaskId);
+    return [...retainedTasks, savedTask];
+}
 let HaTaskManagerPanel = class HaTaskManagerPanel extends i$1 {
     constructor() {
         super(...arguments);
@@ -94846,6 +94022,9 @@ let HaTaskManagerPanel = class HaTaskManagerPanel extends i$1 {
         this.dueInstances = [];
         this.pendingConfirmations = [];
         this.analyticsSnapshots = {};
+        this.profileMappings = [];
+        this.haUsers = [];
+        this.unmappedTags = [];
         this.manualCompletionDialog = null;
         this.manualCompletionBusy = false;
         this.manualCompletionError = "";
@@ -94853,12 +94032,26 @@ let HaTaskManagerPanel = class HaTaskManagerPanel extends i$1 {
         this.nfcBusy = false;
         this.nfcError = "";
         this.taskBuilderSaving = false;
+        this.setupBusy = false;
+        this.setupLoading = false;
+        this.setupWatchActive = false;
         this.taskBuilderStatusMessage = "";
         this.taskBuilderErrorMessage = "";
+        this.taskBuilderHandoffTaskId = "";
         this.pendingPollHandle = null;
+        this.setupWatchPollHandle = null;
         this.hasLoadedInitialData = false;
-        this.lastLoadedUserId = "";
+        this.lastLoadedUserContextKey = "";
+        this.coreLoadRequestId = 0;
+        this.setupLoadRequestId = 0;
+        this.setupWatchRefreshRequestId = 0;
+        this.setupMutationRequestId = 0;
+        this.taskSaveRequestId = 0;
+        this.setupWatchSessionId = 0;
         this.snoozedPendingAttemptIds = new Set();
+        this.panelErrorSource = null;
+        this.hasLoadedSetupData = false;
+        this.setupWatchBaselineTagIds = new Set();
         this.reviewPendingConfirmations = () => {
             if (this.pendingConfirmations.length === 0) {
                 return;
@@ -94938,8 +94131,74 @@ let HaTaskManagerPanel = class HaTaskManagerPanel extends i$1 {
         this.refreshAnalytics = async () => {
             await this.loadAnalytics();
         };
+        this.handleStartSetupWatch = () => {
+            if (!this.hass || !this.canAccessAdminViews || this.setupLoading || this.setupWatchActive) {
+                return;
+            }
+            this.setupWatchBaselineTagIds = new Set(this.unmappedTags.map((tag) => tag.tag_id));
+            this.setupWatchSessionId += 1;
+            this.setupWatchActive = true;
+            void this.pollSetupDiscoveries();
+            this.startSetupWatchPolling();
+        };
+        this.handleStopSetupWatch = () => {
+            this.stopSetupWatch();
+        };
+        this.handleImportHaUser = async (event) => {
+            const mutationRequest = this.beginSetupMutation();
+            if (!mutationRequest) {
+                return;
+            }
+            this.setupBusy = true;
+            this.clearPanelError();
+            try {
+                await importHaUser(mutationRequest.hass, { haUserId: event.detail.haUserId });
+                if (!this.isCurrentSetupMutation(mutationRequest.requestId, mutationRequest.userContextKey)) {
+                    return;
+                }
+                await this.loadCoreData();
+                await this.loadSetupData();
+            }
+            catch (error) {
+                if (this.isCurrentSetupMutation(mutationRequest.requestId, mutationRequest.userContextKey)) {
+                    this.setPanelError(errorMessage(error));
+                }
+            }
+            finally {
+                if (this.isCurrentSetupMutation(mutationRequest.requestId, mutationRequest.userContextKey)) {
+                    this.setupBusy = false;
+                }
+            }
+        };
+        this.handleLinkNfcTag = async (event) => {
+            const mutationRequest = this.beginSetupMutation();
+            if (!mutationRequest) {
+                return;
+            }
+            this.setupBusy = true;
+            this.clearPanelError();
+            try {
+                await linkNfcTag(mutationRequest.hass, event.detail);
+                if (!this.isCurrentSetupMutation(mutationRequest.requestId, mutationRequest.userContextKey)) {
+                    return;
+                }
+                await this.loadCoreData();
+                await this.loadSetupData();
+            }
+            catch (error) {
+                if (this.isCurrentSetupMutation(mutationRequest.requestId, mutationRequest.userContextKey)) {
+                    this.setPanelError(errorMessage(error));
+                }
+            }
+            finally {
+                if (this.isCurrentSetupMutation(mutationRequest.requestId, mutationRequest.userContextKey)) {
+                    this.setupBusy = false;
+                }
+            }
+        };
         this.handleSaveTask = async (event) => {
-            if (!this.hass) {
+            const mutationRequest = this.beginTaskSave();
+            if (!mutationRequest) {
                 return;
             }
             const detail = event.detail;
@@ -94947,36 +94206,68 @@ let HaTaskManagerPanel = class HaTaskManagerPanel extends i$1 {
             this.taskBuilderStatusMessage = "";
             this.taskBuilderErrorMessage = "";
             try {
-                const savedTask = await saveTask(this.hass, detail.task);
+                const savedTask = await saveTask(mutationRequest.hass, detail.task);
+                if (!this.isCurrentTaskSave(mutationRequest.requestId, mutationRequest.userContextKey)) {
+                    return;
+                }
+                this.tasks = upsertTask(this.tasks, savedTask, detail.task.id);
+                this.taskBuilderHandoffTaskId = savedTask.id;
                 this.taskBuilderStatusMessage = `Saved ${savedTask.title}.`;
-                await this.loadCoreData();
-                if (this.currentView === "analytics") {
+                await Promise.all([
+                    this.loadCoreData(),
+                    this.loadSetupData(),
+                ]);
+                if (this.isCurrentTaskSave(mutationRequest.requestId, mutationRequest.userContextKey) &&
+                    this.currentView === "analytics") {
                     await this.loadAnalytics();
                 }
             }
             catch (error) {
-                this.taskBuilderErrorMessage = errorMessage(error);
+                if (this.isCurrentTaskSave(mutationRequest.requestId, mutationRequest.userContextKey)) {
+                    this.taskBuilderErrorMessage = errorMessage(error);
+                }
             }
             finally {
-                this.taskBuilderSaving = false;
+                if (this.isCurrentTaskSave(mutationRequest.requestId, mutationRequest.userContextKey)) {
+                    this.taskBuilderSaving = false;
+                }
             }
         };
     }
     updated(changedProperties) {
         if (changedProperties.has("hass") && this.hass) {
-            const currentUserId = this.hass.user?.id ?? "";
-            if (!this.hasLoadedInitialData || this.lastLoadedUserId !== currentUserId) {
+            this.stopSetupWatch();
+            const currentUserContextKey = this.currentUserContextKey;
+            if (!this.hasLoadedInitialData || this.lastLoadedUserContextKey !== currentUserContextKey) {
+                this.invalidateAdminMutations();
                 this.hasLoadedInitialData = true;
-                this.lastLoadedUserId = currentUserId;
+                this.lastLoadedUserContextKey = currentUserContextKey;
+                this.hasLoadedSetupData = false;
+                this.setupLoading = this.activeView === "setup" || this.activeView === "admin";
+                this.profileMappings = [];
+                this.haUsers = [];
+                this.unmappedTags = [];
                 void this.loadCoreData();
+                if (this.activeView === "setup" || this.activeView === "admin") {
+                    void this.loadSetupData();
+                }
                 this.startPendingPolling();
             }
         }
-        if (changedProperties.has("currentView") && this.currentView === "analytics") {
-            void this.loadAnalytics();
+        if (changedProperties.has("currentView")) {
+            if (this.activeView !== "setup") {
+                this.stopSetupWatch();
+            }
+            if (this.activeView === "analytics") {
+                void this.loadAnalytics();
+            }
+            if ((this.activeView === "setup" || this.activeView === "admin") && !this.hasLoadedSetupData) {
+                void this.loadSetupData();
+            }
         }
     }
     disconnectedCallback() {
+        this.stopSetupWatch();
         if (this.pendingPollHandle !== null) {
             window.clearInterval(this.pendingPollHandle);
             this.pendingPollHandle = null;
@@ -94984,7 +94275,9 @@ let HaTaskManagerPanel = class HaTaskManagerPanel extends i$1 {
         super.disconnectedCallback();
     }
     render() {
-        const activeTab = NAVIGATION_TABS.find((tab) => tab.id === this.currentView);
+        const activeView = this.activeView;
+        const navigationTabs = this.navigationTabs;
+        const activeTab = navigationTabs.find((tab) => tab.id === activeView);
         const today = todayIso();
         const currentProfileId = this.currentProfile?.profile_id;
         const myTaskIds = new Set(this.tasks
@@ -95018,13 +94311,11 @@ let HaTaskManagerPanel = class HaTaskManagerPanel extends i$1 {
           </div>
         </header>
         <nav aria-label="Task Manager sections">
-          ${NAVIGATION_TABS.map((tab) => b `
+          ${navigationTabs.map((tab) => b `
               <button
                 type="button"
-                aria-selected=${tab.id === this.currentView ? "true" : "false"}
-                @click=${() => {
-            this.currentView = tab.id;
-        }}
+                aria-selected=${tab.id === activeView ? "true" : "false"}
+                @click=${() => this.selectView(tab.id)}
               >
                 ${tab.label}
               </button>
@@ -95035,7 +94326,7 @@ let HaTaskManagerPanel = class HaTaskManagerPanel extends i$1 {
           <h2>${activeTab?.label ?? "Task Manager"}</h2>
           <p class="subtitle">${activeTab?.description ?? ""}</p>
           <div class="view-shell">
-            ${this.renderCurrentView()}
+            ${this.renderCurrentView(activeView)}
           </div>
         </section>
         <task-manager-completion-dialog
@@ -95060,11 +94351,11 @@ let HaTaskManagerPanel = class HaTaskManagerPanel extends i$1 {
       </main>
     `;
     }
-    renderCurrentView() {
+    renderCurrentView(view) {
         if (this.coreLoading && this.tasks.length === 0) {
             return b `<div>Loading panel data...</div>`;
         }
-        switch (this.currentView) {
+        switch (view) {
             case "my-tasks":
                 return b `
           <task-manager-my-tasks-view
@@ -95101,11 +94392,34 @@ let HaTaskManagerPanel = class HaTaskManagerPanel extends i$1 {
           <task-manager-task-builder-view
             .tasks=${this.tasks}
             .profiles=${this.profiles}
+            .profileMappings=${this.profileMappings}
+            .haUsers=${this.haUsers}
+            .unmappedTags=${this.unmappedTags}
+            .draftContextKey=${this.currentUserContextKey}
+            .handoffTaskId=${this.taskBuilderHandoffTaskId}
             .saving=${this.taskBuilderSaving}
             .statusMessage=${this.taskBuilderStatusMessage}
             .errorMessage=${this.taskBuilderErrorMessage}
             @save-task-request=${this.handleSaveTask}
           ></task-manager-task-builder-view>
+        `;
+            case "setup":
+                return b `
+          <task-manager-setup-view
+            .haUsers=${this.haUsers}
+            .profiles=${this.profiles}
+            .mappings=${this.profileMappings}
+            .unmappedTags=${this.unmappedTags}
+            .tasks=${this.tasks}
+            .watchingForScan=${this.setupWatchActive}
+            .errorMessage=${this.panelErrorSource === "setup-load" ? this.panelError : ""}
+            .busy=${this.setupBusy}
+            .loading=${this.setupLoading && !this.hasLoadedSetupData}
+            @import-ha-user-request=${this.handleImportHaUser}
+            @link-nfc-tag-request=${this.handleLinkNfcTag}
+            @start-nfc-watch-request=${this.handleStartSetupWatch}
+            @stop-nfc-watch-request=${this.handleStopSetupWatch}
+          ></task-manager-setup-view>
         `;
             default:
                 return A;
@@ -95129,22 +94443,133 @@ let HaTaskManagerPanel = class HaTaskManagerPanel extends i$1 {
             void this.refreshPendingConfirmations();
         }, 10000);
     }
-    async loadCoreData() {
+    startSetupWatchPolling() {
+        if (this.setupWatchPollHandle !== null) {
+            window.clearInterval(this.setupWatchPollHandle);
+        }
+        this.setupWatchPollHandle = window.setInterval(() => {
+            void this.pollSetupDiscoveries();
+        }, SETUP_DISCOVERY_WATCH_INTERVAL_MS);
+    }
+    stopSetupWatch() {
+        this.setupWatchSessionId += 1;
+        this.setupWatchActive = false;
+        if (this.setupWatchPollHandle !== null) {
+            window.clearInterval(this.setupWatchPollHandle);
+            this.setupWatchPollHandle = null;
+        }
+    }
+    clearPanelError() {
+        this.panelError = "";
+        this.panelErrorSource = null;
+    }
+    setPanelError(message, source = null) {
+        this.panelError = message;
+        this.panelErrorSource = source;
+    }
+    clearSetupLoadError() {
+        if (this.panelErrorSource === "setup-load") {
+            this.clearPanelError();
+        }
+    }
+    invalidateAdminMutations() {
+        this.setupMutationRequestId += 1;
+        this.taskSaveRequestId += 1;
+        this.setupBusy = false;
+        this.taskBuilderSaving = false;
+        this.taskBuilderStatusMessage = "";
+        this.taskBuilderErrorMessage = "";
+        this.taskBuilderHandoffTaskId = "";
+    }
+    beginCoreLoad() {
         if (!this.hass) {
+            return null;
+        }
+        return {
+            hass: this.hass,
+            requestId: ++this.coreLoadRequestId,
+            userContextKey: this.currentUserContextKey,
+        };
+    }
+    beginSetupLoad() {
+        if (!this.hass || !this.canAccessAdminViews) {
+            return null;
+        }
+        return {
+            hass: this.hass,
+            requestId: ++this.setupLoadRequestId,
+            userContextKey: this.currentUserContextKey,
+        };
+    }
+    beginSetupWatchRefresh() {
+        if (!this.hass || !this.canAccessAdminViews || !this.setupWatchActive) {
+            return null;
+        }
+        return {
+            hass: this.hass,
+            requestId: ++this.setupWatchRefreshRequestId,
+            userContextKey: this.currentUserContextKey,
+            watchSessionId: this.setupWatchSessionId,
+        };
+    }
+    beginSetupMutation() {
+        if (!this.hass || !this.canAccessAdminViews) {
+            return null;
+        }
+        return {
+            hass: this.hass,
+            requestId: ++this.setupMutationRequestId,
+            userContextKey: this.currentUserContextKey,
+        };
+    }
+    beginTaskSave() {
+        if (!this.hass || !this.canAccessAdminViews) {
+            return null;
+        }
+        return {
+            hass: this.hass,
+            requestId: ++this.taskSaveRequestId,
+            userContextKey: this.currentUserContextKey,
+        };
+    }
+    isCurrentCoreLoad(requestId, userContextKey) {
+        return requestId === this.coreLoadRequestId && userContextKey === this.currentUserContextKey;
+    }
+    isCurrentSetupLoad(requestId, userContextKey) {
+        return requestId === this.setupLoadRequestId && userContextKey === this.currentUserContextKey;
+    }
+    isCurrentSetupMutation(requestId, userContextKey) {
+        return requestId === this.setupMutationRequestId && userContextKey === this.currentUserContextKey;
+    }
+    isCurrentTaskSave(requestId, userContextKey) {
+        return requestId === this.taskSaveRequestId && userContextKey === this.currentUserContextKey;
+    }
+    isCurrentSetupWatchRefresh(requestId, userContextKey, watchSessionId) {
+        return (this.setupWatchActive &&
+            requestId === this.setupWatchRefreshRequestId &&
+            userContextKey === this.currentUserContextKey &&
+            watchSessionId === this.setupWatchSessionId);
+    }
+    async loadCoreData() {
+        const loadRequest = this.beginCoreLoad();
+        if (!loadRequest) {
             return;
         }
         this.coreLoading = true;
-        this.panelError = "";
+        this.clearPanelError();
         try {
             const today = todayIso();
             const fromDate = shiftIsoDate(today, -14);
             const [currentProfile, profiles, tasks, dueInstances, pendingConfirmations] = await Promise.all([
-                fetchCurrentProfile(this.hass),
-                fetchProfiles(this.hass),
-                fetchTasks(this.hass),
-                fetchDueInstances(this.hass, { fromDate, horizonDays: 35 }),
-                fetchPendingConfirmations(this.hass),
+                fetchCurrentProfile(loadRequest.hass),
+                fetchProfiles(loadRequest.hass),
+                fetchTasks(loadRequest.hass),
+                fetchDueInstances(loadRequest.hass, { fromDate, horizonDays: 35 }),
+                fetchPendingConfirmations(loadRequest.hass),
             ]);
+            if (!this.isCurrentCoreLoad(loadRequest.requestId, loadRequest.userContextKey)) {
+                return;
+            }
             this.currentProfile = currentProfile;
             this.profiles = profiles;
             this.tasks = tasks;
@@ -95154,13 +94579,78 @@ let HaTaskManagerPanel = class HaTaskManagerPanel extends i$1 {
             this.ensurePendingDialog();
         }
         catch (error) {
-            this.panelError = errorMessage(error);
+            if (this.isCurrentCoreLoad(loadRequest.requestId, loadRequest.userContextKey)) {
+                this.setPanelError(errorMessage(error));
+            }
         }
         finally {
-            this.coreLoading = false;
+            if (this.isCurrentCoreLoad(loadRequest.requestId, loadRequest.userContextKey)) {
+                this.coreLoading = false;
+            }
         }
-        if (this.currentView === "analytics") {
+        if (this.isCurrentCoreLoad(loadRequest.requestId, loadRequest.userContextKey) &&
+            this.currentView === "analytics") {
             await this.loadAnalytics();
+        }
+    }
+    async loadSetupData() {
+        const loadRequest = this.beginSetupLoad();
+        if (!loadRequest) {
+            return;
+        }
+        this.setupLoading = true;
+        try {
+            const [profileMappings, haUsers, unmappedTags] = await Promise.all([
+                fetchProfileMappings(loadRequest.hass),
+                fetchHaUsers(loadRequest.hass),
+                fetchUnmappedNfcTags(loadRequest.hass),
+            ]);
+            if (!this.isCurrentSetupLoad(loadRequest.requestId, loadRequest.userContextKey)) {
+                return;
+            }
+            this.profileMappings = profileMappings;
+            this.haUsers = haUsers;
+            this.unmappedTags = unmappedTags;
+            this.hasLoadedSetupData = true;
+            this.clearSetupLoadError();
+        }
+        catch (error) {
+            if (this.isCurrentSetupLoad(loadRequest.requestId, loadRequest.userContextKey)) {
+                this.profileMappings = [];
+                this.haUsers = [];
+                this.unmappedTags = [];
+                this.hasLoadedSetupData = false;
+                this.setPanelError(errorMessage(error), "setup-load");
+            }
+        }
+        finally {
+            if (this.isCurrentSetupLoad(loadRequest.requestId, loadRequest.userContextKey)) {
+                this.setupLoading = false;
+            }
+        }
+    }
+    async pollSetupDiscoveries() {
+        const refreshRequest = this.beginSetupWatchRefresh();
+        if (!refreshRequest) {
+            return;
+        }
+        try {
+            const unmappedTags = await fetchUnmappedNfcTags(refreshRequest.hass);
+            if (!this.isCurrentSetupWatchRefresh(refreshRequest.requestId, refreshRequest.userContextKey, refreshRequest.watchSessionId)) {
+                return;
+            }
+            this.unmappedTags = unmappedTags;
+            const discoveredNewTag = unmappedTags.some((tag) => !this.setupWatchBaselineTagIds.has(tag.tag_id));
+            if (discoveredNewTag) {
+                this.stopSetupWatch();
+            }
+        }
+        catch (error) {
+            if (!this.isCurrentSetupWatchRefresh(refreshRequest.requestId, refreshRequest.userContextKey, refreshRequest.watchSessionId)) {
+                return;
+            }
+            this.stopSetupWatch();
+            this.setPanelError(errorMessage(error));
         }
     }
     async loadAnalytics() {
@@ -95180,7 +94670,7 @@ let HaTaskManagerPanel = class HaTaskManagerPanel extends i$1 {
             this.analyticsSnapshots = Object.fromEntries(snapshots);
         }
         catch (error) {
-            this.panelError = errorMessage(error);
+            this.setPanelError(errorMessage(error));
         }
         finally {
             this.analyticsLoading = false;
@@ -95199,7 +94689,7 @@ let HaTaskManagerPanel = class HaTaskManagerPanel extends i$1 {
             this.ensurePendingDialog();
         }
         catch (error) {
-            this.panelError = errorMessage(error);
+            this.setPanelError(errorMessage(error));
         }
     }
     pruneSnoozedAttempts() {
@@ -95217,6 +94707,37 @@ let HaTaskManagerPanel = class HaTaskManagerPanel extends i$1 {
         const nextAttempt = this.pendingConfirmations.find((attempt) => forceOpen || !this.snoozedPendingAttemptIds.has(attempt.id));
         this.activeNfcAttemptId = nextAttempt?.id ?? "";
         this.nfcError = "";
+    }
+    get canAccessAdminViews() {
+        return this.hass?.user?.is_admin === true;
+    }
+    get currentUserContextKey() {
+        const userId = this.hass?.user?.id ?? "";
+        const accessLevel = this.canAccessAdminViews ? "admin" : "user";
+        return `${userId}:${accessLevel}`;
+    }
+    get activeView() {
+        if ((this.currentView === "setup" || this.currentView === "admin") && !this.canAccessAdminViews) {
+            return "my-tasks";
+        }
+        return this.currentView;
+    }
+    get navigationTabs() {
+        return NAVIGATION_TABS.filter((tab) => (tab.id !== "setup" && tab.id !== "admin") || this.canAccessAdminViews);
+    }
+    selectView(view) {
+        if (view === "setup" || view === "admin") {
+            if (!this.canAccessAdminViews) {
+                return;
+            }
+            if (view === "setup" && !this.hasLoadedSetupData) {
+                this.setupLoading = true;
+            }
+        }
+        if (view !== "setup") {
+            this.stopSetupWatch();
+        }
+        this.currentView = view;
     }
 };
 HaTaskManagerPanel.styles = i$4 `
@@ -95425,6 +94946,15 @@ __decorate([
 ], HaTaskManagerPanel.prototype, "analyticsSnapshots", void 0);
 __decorate([
     r()
+], HaTaskManagerPanel.prototype, "profileMappings", void 0);
+__decorate([
+    r()
+], HaTaskManagerPanel.prototype, "haUsers", void 0);
+__decorate([
+    r()
+], HaTaskManagerPanel.prototype, "unmappedTags", void 0);
+__decorate([
+    r()
 ], HaTaskManagerPanel.prototype, "manualCompletionDialog", void 0);
 __decorate([
     r()
@@ -95446,10 +94976,22 @@ __decorate([
 ], HaTaskManagerPanel.prototype, "taskBuilderSaving", void 0);
 __decorate([
     r()
+], HaTaskManagerPanel.prototype, "setupBusy", void 0);
+__decorate([
+    r()
+], HaTaskManagerPanel.prototype, "setupLoading", void 0);
+__decorate([
+    r()
+], HaTaskManagerPanel.prototype, "setupWatchActive", void 0);
+__decorate([
+    r()
 ], HaTaskManagerPanel.prototype, "taskBuilderStatusMessage", void 0);
 __decorate([
     r()
 ], HaTaskManagerPanel.prototype, "taskBuilderErrorMessage", void 0);
+__decorate([
+    r()
+], HaTaskManagerPanel.prototype, "taskBuilderHandoffTaskId", void 0);
 HaTaskManagerPanel = __decorate([
     t("ha-task-manager-panel")
 ], HaTaskManagerPanel);

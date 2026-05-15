@@ -2,10 +2,14 @@ import type {
   CompletionAttempt,
   CompletionRecord,
   CurrentUserProfile,
+  HaUserSummary,
   HouseholdProfile,
+  NfcDiscoveryEntry,
+  NfcTagMapping,
   ProfileAnalyticsSnapshot,
   TaskDefinition,
-  TaskDueInstance
+  TaskDueInstance,
+  UserProfileMapping
 } from "../types/task";
 
 export interface HomeAssistantConnection {
@@ -31,6 +35,22 @@ export interface AnalyticsQuery {
   profileId: string;
   asOf?: string;
   horizonDays?: number;
+}
+
+export interface ImportHaUserOptions {
+  haUserId: string;
+}
+
+export interface ImportHaUserResult {
+  created: boolean;
+  ha_user: HaUserSummary;
+  profile: HouseholdProfile;
+  mapping: UserProfileMapping;
+}
+
+export interface LinkNfcTagOptions {
+  tagId: string;
+  taskId: string;
 }
 
 const DOMAIN = "ha_task_manager";
@@ -63,6 +83,51 @@ export function fetchCurrentProfile(
 ): Promise<CurrentUserProfile> {
   return callApi<CurrentUserProfile>(hass, {
     type: `${DOMAIN}/current_profile`
+  });
+}
+
+export function fetchProfileMappings(
+  hass: HomeAssistantConnection
+): Promise<UserProfileMapping[]> {
+  return callApi<UserProfileMapping[]>(hass, {
+    type: `${DOMAIN}/profile_mappings`
+  });
+}
+
+export function fetchHaUsers(
+  hass: HomeAssistantConnection
+): Promise<HaUserSummary[]> {
+  return callApi<HaUserSummary[]>(hass, {
+    type: `${DOMAIN}/ha_users`
+  });
+}
+
+export function fetchUnmappedNfcTags(
+  hass: HomeAssistantConnection
+): Promise<NfcDiscoveryEntry[]> {
+  return callApi<NfcDiscoveryEntry[]>(hass, {
+    type: `${DOMAIN}/unmapped_nfc_tags`
+  });
+}
+
+export function importHaUser(
+  hass: HomeAssistantConnection,
+  options: ImportHaUserOptions
+): Promise<ImportHaUserResult> {
+  return callApi<ImportHaUserResult>(hass, {
+    type: `${DOMAIN}/import_ha_user`,
+    ha_user_id: options.haUserId
+  });
+}
+
+export function linkNfcTag(
+  hass: HomeAssistantConnection,
+  options: LinkNfcTagOptions
+): Promise<NfcTagMapping> {
+  return callApi<NfcTagMapping>(hass, {
+    type: `${DOMAIN}/link_nfc_tag`,
+    tag_id: options.tagId,
+    task_id: options.taskId
   });
 }
 
