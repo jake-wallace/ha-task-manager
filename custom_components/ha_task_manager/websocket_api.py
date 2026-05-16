@@ -930,7 +930,15 @@ def async_register_websocket_api(hass: HomeAssistant) -> None:
                 )
                 return
 
+            original_active = task.active
             task.active = True
+            try:
+                _validate_unique_nfc_tag(task, tasks)
+            except ValueError as err:
+                task.active = original_active
+                connection.send_error(msg["id"], "invalid_task", str(err))
+                return
+
             task.updated_at = utc_now()
             stored_tasks = [existing for existing in tasks if existing.id != task.id]
             stored_tasks.append(task)

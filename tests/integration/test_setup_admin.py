@@ -610,3 +610,160 @@ async def test_restore_task_marks_task_active_and_persists(
             "updated_at": response["result"]["updated_at"],
         }
     ]
+
+
+async def test_restore_task_rejects_nfc_tag_conflict_with_active_task(
+    enable_custom_integrations,
+    hass,
+    hass_ws_client,
+) -> None:
+    store = TaskStore(hass)
+    inactive_task = _task_payload()
+    inactive_task["active"] = False
+    inactive_task["nfc_tag_id"] = "tag-shared"
+    active_task = _second_task_payload()
+    active_task["nfc_tag_id"] = "tag-shared"
+    await store.async_save_tasks({"tasks": [inactive_task, active_task]})
+    await store.async_save_profiles({"profiles": [], "mappings": []})
+
+    entry = MockConfigEntry(domain=DOMAIN, title="Task Manager")
+    entry.add_to_hass(hass)
+
+    assert await hass.config_entries.async_setup(entry.entry_id)
+
+    client = await hass_ws_client(hass)
+    await client.send_json_auto_id(
+        {
+            "type": "ha_task_manager/restore_task",
+            "task_id": "task-bathroom",
+        }
+    )
+    response = await client.receive_json()
+
+    assert response["success"] is False
+    assert response["error"]["code"] == "invalid_task"
+
+    stored_tasks = await store.async_load_tasks()
+    assert stored_tasks["tasks"] == [inactive_task, active_task]
+
+
+async def test_archive_task_returns_task_not_found_for_unknown_task(
+    enable_custom_integrations,
+    hass,
+    hass_ws_client,
+) -> None:
+    store = TaskStore(hass)
+    await store.async_save_tasks({"tasks": [_task_payload()]})
+    await store.async_save_profiles({"profiles": [], "mappings": []})
+
+    entry = MockConfigEntry(domain=DOMAIN, title="Task Manager")
+    entry.add_to_hass(hass)
+
+    assert await hass.config_entries.async_setup(entry.entry_id)
+
+    client = await hass_ws_client(hass)
+    await client.send_json_auto_id(
+        {
+            "type": "ha_task_manager/archive_task",
+            "task_id": "task-missing",
+        }
+    )
+    response = await client.receive_json()
+
+    assert response["success"] is False
+    assert response["error"]["code"] == "task_not_found"
+
+    stored_tasks = await store.async_load_tasks()
+    assert stored_tasks["tasks"] == [_task_payload()]
+
+
+async def test_restore_task_returns_task_not_found_for_unknown_task(
+    enable_custom_integrations,
+    hass,
+    hass_ws_client,
+) -> None:
+    store = TaskStore(hass)
+    await store.async_save_tasks({"tasks": [_task_payload()]})
+    await store.async_save_profiles({"profiles": [], "mappings": []})
+
+    entry = MockConfigEntry(domain=DOMAIN, title="Task Manager")
+    entry.add_to_hass(hass)
+
+    assert await hass.config_entries.async_setup(entry.entry_id)
+
+    client = await hass_ws_client(hass)
+    await client.send_json_auto_id(
+        {
+            "type": "ha_task_manager/restore_task",
+            "task_id": "task-missing",
+        }
+    )
+    response = await client.receive_json()
+
+    assert response["success"] is False
+    assert response["error"]["code"] == "task_not_found"
+
+    stored_tasks = await store.async_load_tasks()
+    assert stored_tasks["tasks"] == [_task_payload()]
+
+
+async def test_non_admin_cannot_archive_task_via_websocket(
+    enable_custom_integrations,
+    hass,
+    hass_ws_client,
+    hass_read_only_access_token,
+) -> None:
+    store = TaskStore(hass)
+    await store.async_save_tasks({"tasks": [_task_payload()]})
+    await store.async_save_profiles({"profiles": [], "mappings": []})
+
+    entry = MockConfigEntry(domain=DOMAIN, title="Task Manager")
+    entry.add_to_hass(hass)
+
+    assert await hass.config_entries.async_setup(entry.entry_id)
+
+    client = await hass_ws_client(hass, access_token=hass_read_only_access_token)
+    await client.send_json_auto_id(
+        {
+            "type": "ha_task_manager/archive_task",
+            "task_id": "task-bathroom",
+        }
+    )
+    response = await client.receive_json()
+
+    assert response["success"] is False
+
+    stored_tasks = await store.async_load_tasks()
+    assert stored_tasks["tasks"] == [_task_payload()]
+
+
+async def test_non_admin_cannot_restore_task_via_websocket(
+    enable_custom_integrations,
+    hass,
+    hass_ws_client,
+    hass_read_only_access_token,
+) -> None:
+    store = TaskStore(hass)
+    inactive_task = _task_payload()
+    inactive_task["active"] = False
+    await store.async_save_tasks({"tasks": [inactive_task]})
+    await store.async_save_profiles({"profiles": [], "mappings": []})
+
+    entry = MockConfigEntry(domain=DOMAIN, title="Task Manager")
+    entry.add_to_hass(hass)
+
+    assert await hass.config_entries.async_setup(entry.entry_id)
+
+    client = await hass_ws_client(hass, access_token=hass_read_only_access_token)
+    await client.send_json_auto_id(
+        {
+            "type": "ha_task_manager/restore_task",
+            "task_id": "task-bathroom",
+        }
+    )
+    response = await client.receive_json()
+
+    assert response["success"] is False
+
+    stored_tasks = await store.async_load_tasks()
+    assert stored_tasks["tasks"] == [inactive_task]
