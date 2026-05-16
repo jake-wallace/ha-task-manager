@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import "./task-builder-view";
 import type { TaskBuilderView } from "./task-builder-view";
+import type { TaskDefinition } from "../types/task";
 
 describe("task-manager-task-builder-view", () => {
   afterEach(() => {
@@ -161,5 +162,51 @@ describe("task-manager-task-builder-view", () => {
       { value: "tag-front-door", label: "tag-front-door" },
       { value: "tag-laundry-room", label: "tag-laundry-room" },
     ]);
+  });
+
+  it("creates a task when crypto.randomUUID is unavailable", async () => {
+    const element = document.createElement("task-manager-task-builder-view") as TaskBuilderView;
+    element.profiles = [
+      {
+        id: "profile-1",
+        display_name: "Alex Profile",
+        avatar_url: "",
+        created_at: "2026-05-10T00:00:00+00:00",
+      },
+    ];
+
+    document.body.append(element);
+    await element.updateComplete;
+
+    const originalRandomUuid = (globalThis.crypto as Crypto & { randomUUID?: unknown }).randomUUID;
+    Object.defineProperty(globalThis.crypto, "randomUUID", {
+      value: undefined,
+      configurable: true,
+    });
+
+    try {
+      const titleInput = element.shadowRoot?.querySelector("input[required]") as HTMLInputElement | null;
+      const form = element.shadowRoot?.querySelector("form") as HTMLFormElement | null;
+
+      titleInput!.value = "Fold laundry";
+      titleInput!.dispatchEvent(new Event("input"));
+
+      const saveTaskEvents: CustomEvent[] = [];
+      element.addEventListener("save-task-request", (event) => {
+        saveTaskEvents.push(event as CustomEvent);
+      });
+
+      form?.requestSubmit();
+      await element.updateComplete;
+
+      expect(saveTaskEvents).toHaveLength(1);
+      const savedTask = (saveTaskEvents[0].detail as { task: TaskDefinition }).task;
+      expect(savedTask.id).toMatch(/^task-fold-laundry-[a-z0-9]{8}$/);
+    } finally {
+      Object.defineProperty(globalThis.crypto, "randomUUID", {
+        value: originalRandomUuid,
+        configurable: true,
+      });
+    }
   });
 });

@@ -75,6 +75,23 @@ function slugify(value: string): string {
     .replace(/^-+|-+$/g, "") || "task";
 }
 
+function randomToken(length = 8): string {
+  if (globalThis.crypto && typeof globalThis.crypto.randomUUID === "function") {
+    return globalThis.crypto.randomUUID().replace(/-/g, "").slice(0, length);
+  }
+
+  if (globalThis.crypto && typeof globalThis.crypto.getRandomValues === "function") {
+    const bytes = new Uint8Array(Math.ceil(length / 2));
+    globalThis.crypto.getRandomValues(bytes);
+    return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0"))
+      .join("")
+      .slice(0, length);
+  }
+
+  const fallback = `${Date.now().toString(16)}${Math.random().toString(16).slice(2)}`;
+  return fallback.slice(0, length).padEnd(length, "0");
+}
+
 @customElement("task-manager-task-builder-view")
 export class TaskBuilderView extends LitElement {
   @property({ attribute: false }) public tasks: TaskDefinition[] = [];
@@ -729,7 +746,7 @@ export class TaskBuilderView extends LitElement {
       skipWindows: [
         ...this.formState.skipWindows,
         {
-          id: `skip-${crypto.randomUUID().slice(0, 8)}`,
+          id: `skip-${randomToken(8)}`,
           label: "",
           start_date: this.formState.startDate,
           end_date: this.formState.startDate,
@@ -769,7 +786,7 @@ export class TaskBuilderView extends LitElement {
 
     const existingTask = this.tasks.find((task) => task.id === this.selectedTaskId) ?? null;
     const nowIsoString = new Date().toISOString();
-    const taskId = existingTask?.id ?? `task-${slugify(this.formState.title)}-${crypto.randomUUID().slice(0, 8)}`;
+    const taskId = existingTask?.id ?? `task-${slugify(this.formState.title)}-${randomToken(8)}`;
 
     const task: TaskDefinition = {
       id: taskId,
