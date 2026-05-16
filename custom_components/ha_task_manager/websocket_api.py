@@ -726,6 +726,7 @@ def async_register_websocket_api(hass: HomeAssistant) -> None:
         {
             vol.Required("type"): f"{DOMAIN}/due_instances",
             vol.Optional("from_date"): cv.string,
+            vol.Optional("to_date"): cv.string,
             vol.Optional("horizon_days", default=30): vol.Coerce(int),
         }
     )
@@ -750,7 +751,25 @@ def async_register_websocket_api(hass: HomeAssistant) -> None:
             connection.send_error(msg["id"], "invalid_from_date", str(err))
             return
 
-        horizon_days = msg["horizon_days"]
+        to_date_raw = msg.get("to_date")
+        if to_date_raw is not None:
+            try:
+                to_date = _parse_date(to_date_raw)
+            except ValueError as err:
+                connection.send_error(msg["id"], "invalid_to_date", str(err))
+                return
+
+            if to_date < from_date:
+                connection.send_error(
+                    msg["id"],
+                    "invalid_date_range",
+                    "to_date must be on or after from_date.",
+                )
+                return
+
+            horizon_days = (to_date - from_date).days + 1
+        else:
+            horizon_days = msg["horizon_days"]
 
         results: list[dict[str, Any]] = []
         for task in tasks:
