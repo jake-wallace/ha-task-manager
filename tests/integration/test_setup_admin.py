@@ -844,3 +844,64 @@ async def test_due_instances_rejects_invalid_date_range_when_to_date_precedes_fr
 
     assert response["success"] is False
     assert response["error"]["code"] == "invalid_date_range"
+
+
+async def test_due_instances_rejects_malformed_to_date(
+    enable_custom_integrations,
+    hass,
+    hass_ws_client,
+) -> None:
+    store = TaskStore(hass)
+    await store.async_save_tasks({"tasks": [_task_payload()]})
+    await store.async_save_profiles({"profiles": [], "mappings": []})
+
+    entry = MockConfigEntry(domain=DOMAIN, title="Task Manager")
+    entry.add_to_hass(hass)
+
+    assert await hass.config_entries.async_setup(entry.entry_id)
+
+    client = await hass_ws_client(hass)
+    await client.send_json_auto_id(
+        {
+            "type": "ha_task_manager/due_instances",
+            "from_date": "2026-05-10",
+            "to_date": "2026-05-not-a-date",
+        }
+    )
+    response = await client.receive_json()
+
+    assert response["success"] is False
+    assert response["error"]["code"] == "invalid_to_date"
+
+
+async def test_due_instances_to_date_takes_precedence_over_horizon_days(
+    enable_custom_integrations,
+    hass,
+    hass_ws_client,
+) -> None:
+    store = TaskStore(hass)
+    await store.async_save_tasks({"tasks": [_task_payload()]})
+    await store.async_save_profiles({"profiles": [], "mappings": []})
+
+    entry = MockConfigEntry(domain=DOMAIN, title="Task Manager")
+    entry.add_to_hass(hass)
+
+    assert await hass.config_entries.async_setup(entry.entry_id)
+
+    client = await hass_ws_client(hass)
+    await client.send_json_auto_id(
+        {
+            "type": "ha_task_manager/due_instances",
+            "from_date": "2026-05-10",
+            "to_date": "2026-05-12",
+            "horizon_days": 1,
+        }
+    )
+    response = await client.receive_json()
+
+    assert response["success"] is True
+    assert [instance["id"] for instance in response["result"]] == [
+        "task-bathroom:2026-05-10",
+        "task-bathroom:2026-05-11",
+        "task-bathroom:2026-05-12",
+    ]
