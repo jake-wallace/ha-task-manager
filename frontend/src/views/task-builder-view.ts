@@ -158,6 +158,25 @@ export class TaskBuilderView extends LitElement {
       margin-top: 16px;
     }
 
+    .task-section {
+      margin-top: 16px;
+    }
+
+    .task-section-title {
+      margin: 0;
+      font-size: 0.95rem;
+      color: #35513b;
+    }
+
+    .task-item {
+      display: grid;
+      gap: 8px;
+    }
+
+    .task-item-action {
+      justify-self: start;
+    }
+
     .task-button,
     .new-button {
       appearance: none;
@@ -404,6 +423,9 @@ export class TaskBuilderView extends LitElement {
   }
 
   protected render() {
+    const activeTasks = this.tasks.filter((task) => task.active);
+    const archivedTasks = this.tasks.filter((task) => !task.active);
+
     return html`
       <div class="layout">
         <aside class="panel">
@@ -412,20 +434,64 @@ export class TaskBuilderView extends LitElement {
           <button class="new-button ${this.selectedTaskId === NEW_TASK_ID ? "active" : ""}" type="button" @click=${this.startNewTask}>
             New Task
           </button>
-          <div class="task-list">
-            ${this.tasks.map(
-              (task) => html`
-                <button
-                  class="task-button ${this.selectedTaskId === task.id ? "active" : ""}"
-                  type="button"
-                  @click=${() => this.selectTask(task.id)}
-                >
-                  <strong>${task.title}</strong>
-                  <div>${task.active ? "Active" : "Paused"} · ${task.recurrence.frequency}</div>
-                </button>
-              `
-            )}
-          </div>
+          <section class="task-section" data-active-task-section>
+            <h3 class="task-section-title">Active Tasks</h3>
+            <div class="task-list">
+              ${activeTasks.length === 0
+                ? html`<p>No active tasks yet.</p>`
+                : activeTasks.map(
+                    (task) => html`
+                      <div class="task-item">
+                        <button
+                          class="task-button ${this.selectedTaskId === task.id ? "active" : ""}"
+                          type="button"
+                          @click=${() => this.selectTask(task.id)}
+                        >
+                          <strong data-task-title>${task.title}</strong>
+                          <div>Active · ${task.recurrence.frequency}</div>
+                        </button>
+                        <button
+                          class="inline-action task-item-action"
+                          type="button"
+                          data-archive-task-button=${task.id}
+                          @click=${() => this.requestArchiveTask(task.id)}
+                        >
+                          Archive
+                        </button>
+                      </div>
+                    `
+                  )}
+            </div>
+          </section>
+          <section class="task-section" data-archived-task-section>
+            <h3 class="task-section-title">Archived Tasks</h3>
+            <div class="task-list">
+              ${archivedTasks.length === 0
+                ? html`<p>No archived tasks.</p>`
+                : archivedTasks.map(
+                    (task) => html`
+                      <div class="task-item">
+                        <button
+                          class="task-button ${this.selectedTaskId === task.id ? "active" : ""}"
+                          type="button"
+                          @click=${() => this.selectTask(task.id)}
+                        >
+                          <strong data-task-title>${task.title}</strong>
+                          <div>Archived · ${task.recurrence.frequency}</div>
+                        </button>
+                        <button
+                          class="inline-action task-item-action"
+                          type="button"
+                          data-restore-task-button=${task.id}
+                          @click=${() => this.requestRestoreTask(task.id)}
+                        >
+                          Restore
+                        </button>
+                      </div>
+                    `
+                  )}
+            </div>
+          </section>
         </aside>
         <section class="panel">
           <h3>${this.selectedTaskId === NEW_TASK_ID ? "Create Task" : "Edit Task"}</h3>
@@ -639,6 +705,26 @@ export class TaskBuilderView extends LitElement {
     this.selectedTaskId = task.id;
     this.localError = "";
     this.formState = formStateFromTask(task);
+  }
+
+  private requestArchiveTask(taskId: string): void {
+    this.dispatchEvent(
+      new CustomEvent("archive-task-request", {
+        detail: { taskId },
+        bubbles: true,
+        composed: true,
+      })
+    );
+  }
+
+  private requestRestoreTask(taskId: string): void {
+    this.dispatchEvent(
+      new CustomEvent("restore-task-request", {
+        detail: { taskId },
+        bubbles: true,
+        composed: true,
+      })
+    );
   }
 
   private setFrequency(frequency: RecurrenceFrequency): void {
