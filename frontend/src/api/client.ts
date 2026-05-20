@@ -18,7 +18,12 @@ export interface HomeAssistantConnection {
 
 export interface DueInstanceQuery {
   fromDate?: string;
+  toDate?: string;
   horizonDays?: number;
+}
+
+export interface ArchiveTaskOptions {
+  taskId: string;
 }
 
 export interface ConfirmCompletionOptions {
@@ -144,7 +149,28 @@ export function fetchDueInstances(
   return callApi<TaskDueInstance[]>(hass, {
     type: `${DOMAIN}/due_instances`,
     ...(query.fromDate ? { from_date: query.fromDate } : {}),
+    ...(query.toDate ? { to_date: query.toDate } : {}),
     ...(query.horizonDays !== undefined ? { horizon_days: query.horizonDays } : {})
+  });
+}
+
+export function archiveTask(
+  hass: HomeAssistantConnection,
+  options: ArchiveTaskOptions
+): Promise<TaskDefinition> {
+  return callApi<TaskDefinition>(hass, {
+    type: `${DOMAIN}/archive_task`,
+    task_id: options.taskId
+  });
+}
+
+export function restoreTask(
+  hass: HomeAssistantConnection,
+  options: ArchiveTaskOptions
+): Promise<TaskDefinition> {
+  return callApi<TaskDefinition>(hass, {
+    type: `${DOMAIN}/restore_task`,
+    task_id: options.taskId
   });
 }
 
