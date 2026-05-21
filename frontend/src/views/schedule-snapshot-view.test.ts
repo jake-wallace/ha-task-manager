@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it } from "vitest";
 
 import "./schedule-snapshot-view";
-import type { ScheduleSnapshotView } from "./schedule-snapshot-view";
-import type { SnapshotGroup, TaskDefinition, TaskDueInstance } from "../types/task";
+import type { ScheduleSnapshotView, SnapshotGroup } from "./schedule-snapshot-view";
+import type { TaskDefinition, TaskDueInstance } from "../types/task";
 
 function buildTask(overrides: Partial<TaskDefinition> = {}): TaskDefinition {
   return {
