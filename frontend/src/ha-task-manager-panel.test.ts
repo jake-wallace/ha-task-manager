@@ -1347,6 +1347,343 @@ describe("ha-task-manager-panel", () => {
     expect(activeTaskButton?.textContent).toContain("Fold laundry");
   });
 
+  it("archives and restores tasks through admin actions", async () => {
+    const requestedTypes: string[] = [];
+    let storedTasks: TaskDefinition[] = [
+      {
+        ...taskFixture(),
+        id: "task-1",
+        title: "Kitchen counters",
+        active: true,
+      },
+    ];
+
+    vi.spyOn(window, "setInterval").mockReturnValue(1);
+    vi.spyOn(window, "clearInterval").mockImplementation(() => undefined);
+
+    const hass = createHass(async (message) => {
+      const type = String(message.type);
+      requestedTypes.push(type);
+
+      switch (type) {
+        case "ha_task_manager/current_profile":
+          return {
+            ha_user_id: "ha-user-1",
+            mapped: true,
+            profile_id: "profile-1",
+            display_name: "Alex",
+          };
+        case "ha_task_manager/profiles":
+          return [
+            {
+              id: "profile-1",
+              display_name: "Alex",
+              avatar_url: "",
+              created_at: "2026-05-10T00:00:00+00:00",
+            },
+          ];
+        case "ha_task_manager/tasks":
+          return storedTasks;
+        case "ha_task_manager/due_instances":
+          return [];
+        case "ha_task_manager/pending_confirmations":
+          return [];
+        case "ha_task_manager/profile_mappings":
+          return [];
+        case "ha_task_manager/ha_users":
+          return [];
+        case "ha_task_manager/unmapped_nfc_tags":
+          return [];
+        case "ha_task_manager/archive_task": {
+          storedTasks = storedTasks.map((task) =>
+            task.id === String(message.task_id)
+              ? {
+                  ...task,
+                  active: false,
+                  updated_at: "2026-05-14T09:00:00+00:00",
+                }
+              : task
+          );
+          return storedTasks[0];
+        }
+        case "ha_task_manager/restore_task": {
+          storedTasks = storedTasks.map((task) =>
+            task.id === String(message.task_id)
+              ? {
+                  ...task,
+                  active: true,
+                  updated_at: "2026-05-14T09:05:00+00:00",
+                }
+              : task
+          );
+          return storedTasks[0];
+        }
+        default:
+          throw new Error(`Unexpected websocket call: ${type}`);
+      }
+    }, { isAdmin: true });
+
+    const panel = document.createElement("ha-task-manager-panel") as HaTaskManagerPanel;
+    panel.hass = hass;
+    document.body.append(panel);
+
+    await settlePanel(panel);
+
+    const manageTasksButton = Array.from(panel.shadowRoot?.querySelectorAll("nav button") ?? []).find(
+      (button) => button.textContent?.trim() === "Manage Tasks"
+    ) as HTMLButtonElement | undefined;
+    manageTasksButton?.click();
+
+    await settlePanel(panel);
+
+    const builderView = panel.shadowRoot?.querySelector("task-manager-task-builder-view") as
+      | ({ tasks?: TaskDefinition[] } & HTMLElement)
+      | null;
+
+    builderView?.dispatchEvent(
+      new CustomEvent("archive-task-request", {
+        detail: { taskId: "task-1" },
+        bubbles: true,
+        composed: true,
+      })
+    );
+    await settlePanel(panel);
+
+    builderView?.dispatchEvent(
+      new CustomEvent("restore-task-request", {
+        detail: { taskId: "task-1" },
+        bubbles: true,
+        composed: true,
+      })
+    );
+    await settlePanel(panel);
+
+    const refreshedBuilderView = panel.shadowRoot?.querySelector("task-manager-task-builder-view") as
+      | ({ tasks?: TaskDefinition[] } & HTMLElement)
+      | null;
+
+    expect(requestedTypes).toContain("ha_task_manager/archive_task");
+    expect(requestedTypes).toContain("ha_task_manager/restore_task");
+    expect(refreshedBuilderView?.tasks?.find((task) => task.id === "task-1")?.active).toBe(true);
+  });
+
+  it("loads custom-range snapshots and passes due instances into schedule snapshot view", async () => {
+    const requestedMessages: WsMessage[] = [];
+
+    vi.spyOn(window, "setInterval").mockReturnValue(1);
+    vi.spyOn(window, "clearInterval").mockImplementation(() => undefined);
+
+    const hass = createHass(async (message) => {
+      requestedMessages.push(message);
+      const type = String(message.type);
+
+      switch (type) {
+        case "ha_task_manager/current_profile":
+          return {
+            ha_user_id: "ha-user-1",
+            mapped: true,
+            profile_id: "profile-1",
+            display_name: "Alex",
+          };
+        case "ha_task_manager/profiles":
+          return [
+            {
+              id: "profile-1",
+              display_name: "Alex",
+              avatar_url: "",
+              created_at: "2026-05-10T00:00:00+00:00",
+            },
+          ];
+        case "ha_task_manager/tasks":
+          return [
+            {
+              ...taskFixture(),
+              id: "task-1",
+              title: "Laundry",
+            },
+          ];
+        case "ha_task_manager/due_instances":
+          if (typeof message.to_date === "string") {
+            return [
+              {
+                id: "due-snapshot-1",
+                task_id: "task-1",
+                due_date: "2026-05-20",
+                skipped: false,
+              },
+            ];
+          }
+          return [];
+        case "ha_task_manager/pending_confirmations":
+          return [];
+        case "ha_task_manager/profile_mappings":
+          return [];
+        case "ha_task_manager/ha_users":
+          return [];
+        case "ha_task_manager/unmapped_nfc_tags":
+          return [];
+        default:
+          throw new Error(`Unexpected websocket call: ${type}`);
+      }
+    }, { isAdmin: true });
+
+    const panel = document.createElement("ha-task-manager-panel") as HaTaskManagerPanel;
+    panel.hass = hass;
+    document.body.append(panel);
+
+    await settlePanel(panel);
+
+    const manageTasksButton = Array.from(panel.shadowRoot?.querySelectorAll("nav button") ?? []).find(
+      (button) => button.textContent?.trim() === "Manage Tasks"
+    ) as HTMLButtonElement | undefined;
+    manageTasksButton?.click();
+
+    await settlePanel(panel);
+
+    const snapshotFromInput = panel.shadowRoot?.querySelector("[data-snapshot-from-date]") as
+      | HTMLInputElement
+      | null;
+    const snapshotToInput = panel.shadowRoot?.querySelector("[data-snapshot-to-date]") as
+      | HTMLInputElement
+      | null;
+    const loadSnapshotButton = panel.shadowRoot?.querySelector("[data-load-snapshot-range]") as
+      | HTMLButtonElement
+      | null;
+
+    snapshotFromInput!.value = "2026-05-01";
+    snapshotFromInput!.dispatchEvent(new Event("input"));
+    snapshotToInput!.value = "2026-05-31";
+    snapshotToInput!.dispatchEvent(new Event("input"));
+    loadSnapshotButton?.click();
+
+    await settlePanel(panel);
+
+    const snapshotRangeRequest = requestedMessages.find(
+      (message) =>
+        String(message.type) === "ha_task_manager/due_instances" &&
+        message.from_date === "2026-05-01" &&
+        message.to_date === "2026-05-31"
+    );
+
+    const snapshotView = panel.shadowRoot?.querySelector("task-manager-schedule-snapshot-view") as
+      | ({ snapshotGroups?: Array<{ date: string }> } & HTMLElement)
+      | null;
+
+    expect(snapshotRangeRequest).toBeDefined();
+    expect(snapshotView).not.toBeNull();
+    expect(snapshotView?.snapshotGroups?.map((group) => group.date)).toEqual(["2026-05-20"]);
+  });
+
+  it("hands off snapshot quick-summary edit requests to the task builder", async () => {
+    vi.spyOn(window, "setInterval").mockReturnValue(1);
+    vi.spyOn(window, "clearInterval").mockImplementation(() => undefined);
+
+    const hass = createHass(async (message) => {
+      const type = String(message.type);
+
+      switch (type) {
+        case "ha_task_manager/current_profile":
+          return {
+            ha_user_id: "ha-user-1",
+            mapped: true,
+            profile_id: "profile-1",
+            display_name: "Alex",
+          };
+        case "ha_task_manager/profiles":
+          return [
+            {
+              id: "profile-1",
+              display_name: "Alex",
+              avatar_url: "",
+              created_at: "2026-05-10T00:00:00+00:00",
+            },
+          ];
+        case "ha_task_manager/tasks":
+          return [
+            {
+              ...taskFixture(),
+              id: "task-1",
+              title: "Laundry",
+            },
+          ];
+        case "ha_task_manager/due_instances":
+          if (typeof message.to_date === "string") {
+            return [
+              {
+                id: "due-snapshot-1",
+                task_id: "task-1",
+                due_date: "2026-05-20",
+                skipped: false,
+              },
+            ];
+          }
+          return [];
+        case "ha_task_manager/pending_confirmations":
+          return [];
+        case "ha_task_manager/profile_mappings":
+          return [];
+        case "ha_task_manager/ha_users":
+          return [];
+        case "ha_task_manager/unmapped_nfc_tags":
+          return [];
+        default:
+          throw new Error(`Unexpected websocket call: ${type}`);
+      }
+    }, { isAdmin: true });
+
+    const panel = document.createElement("ha-task-manager-panel") as HaTaskManagerPanel;
+    panel.hass = hass;
+    document.body.append(panel);
+
+    await settlePanel(panel);
+
+    const manageTasksButton = Array.from(panel.shadowRoot?.querySelectorAll("nav button") ?? []).find(
+      (button) => button.textContent?.trim() === "Manage Tasks"
+    ) as HTMLButtonElement | undefined;
+    manageTasksButton?.click();
+    await settlePanel(panel);
+
+    const snapshotFromInput = panel.shadowRoot?.querySelector("[data-snapshot-from-date]") as
+      | HTMLInputElement
+      | null;
+    const snapshotToInput = panel.shadowRoot?.querySelector("[data-snapshot-to-date]") as
+      | HTMLInputElement
+      | null;
+    const loadSnapshotButton = panel.shadowRoot?.querySelector("[data-load-snapshot-range]") as
+      | HTMLButtonElement
+      | null;
+
+    snapshotFromInput!.value = "2026-05-01";
+    snapshotFromInput!.dispatchEvent(new Event("input"));
+    snapshotToInput!.value = "2026-05-31";
+    snapshotToInput!.dispatchEvent(new Event("input"));
+    loadSnapshotButton?.click();
+    await settlePanel(panel);
+
+    const snapshotView = panel.shadowRoot?.querySelector("task-manager-schedule-snapshot-view") as
+      | ({ updateComplete?: Promise<unknown> } & HTMLElement)
+      | null;
+
+    const snapshotItemButton = snapshotView?.shadowRoot?.querySelector(
+      '[data-snapshot-item="due-snapshot-1"]'
+    ) as HTMLButtonElement | null;
+    snapshotItemButton?.click();
+    await snapshotView?.updateComplete;
+
+    const editButton = snapshotView?.shadowRoot?.querySelector(
+      "[data-edit-task-button]"
+    ) as HTMLButtonElement | null;
+    editButton?.click();
+
+    await settlePanel(panel);
+
+    const builderView = panel.shadowRoot?.querySelector("task-manager-task-builder-view") as
+      | ({ handoffTaskId?: string } & HTMLElement)
+      | null;
+
+    expect(builderView?.handoffTaskId).toBe("task-1");
+  });
+
   it("ignores a stale in-flight save result after the hass user context changes", async () => {
     const saveRequest = createDeferred<TaskDefinition>();
 

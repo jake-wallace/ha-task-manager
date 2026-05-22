@@ -2,6 +2,7 @@ import { LitElement, css, html, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 
 import {
+  archiveTask,
   completeDueInstance,
   confirmCompletion,
   fetchAnalytics,
@@ -15,6 +16,7 @@ import {
   fetchUnmappedNfcTags,
   importHaUser,
   linkNfcTag,
+  restoreTask,
   saveTask,
 } from "./api/client";
 import "./components/completion-dialog";
@@ -23,6 +25,7 @@ import "./views/analytics-view";
 import "./views/household-board-view";
 import "./views/my-tasks-view";
 import "./views/setup-view";
+import "./views/schedule-snapshot-view";
 import "./views/task-builder-view";
 import type {
   ImportHaUserRequestDetail,
@@ -36,6 +39,7 @@ import type {
   HouseholdProfile,
   NfcDiscoveryEntry,
   ProfileAnalyticsSnapshot,
+  SnapshotGroup,
   TaskDefinition,
   TaskDueInstance,
   UserProfileMapping,
@@ -125,6 +129,24 @@ function upsertTask(tasks: TaskDefinition[], savedTask: TaskDefinition, requeste
   return [...retainedTasks, savedTask];
 }
 
+function groupDueInstancesByDate(dueInstances: TaskDueInstance[]): SnapshotGroup[] {
+  const byDate = new Map<string, TaskDueInstance[]>();
+
+  for (const instance of dueInstances) {
+    if (!byDate.has(instance.due_date)) {
+      byDate.set(instance.due_date, []);
+    }
+    byDate.get(instance.due_date)?.push(instance);
+  }
+
+  return Array.from(byDate.entries())
+    .sort(([leftDate], [rightDate]) => leftDate.localeCompare(rightDate))
+    .map(([date, items]) => ({
+      date,
+      items: items.slice().sort((left, right) => left.id.localeCompare(right.id)),
+    }));
+}
+
 type PanelErrorSource = "setup-load" | null;
 
 @customElement("ha-task-manager-panel")
@@ -183,6 +205,16 @@ export class HaTaskManagerPanel extends LitElement {
 
   @state() private taskBuilderHandoffTaskId = "";
 
+  @state() private snapshotFromDate = shiftIsoDate(todayIso(), -14);
+
+  @state() private snapshotToDate = shiftIsoDate(todayIso(), 30);
+
+  @state() private snapshotGroups: SnapshotGroup[] = [];
+
+  @state() private snapshotLoading = false;
+
+  @state() private snapshotError = "";
+
   private pendingPollHandle: number | null = null;
 
   private setupWatchPollHandle: number | null = null;
@@ -200,6 +232,8 @@ export class HaTaskManagerPanel extends LitElement {
   private setupMutationRequestId = 0;
 
   private taskSaveRequestId = 0;
+
+  private snapshotLoadRequestId = 0;
 
   private setupWatchSessionId = 0;
 
@@ -367,6 +401,53 @@ export class HaTaskManagerPanel extends LitElement {
       margin-top: 18px;
     }
 
+    .admin-shell {
+      display: grid;
+      gap: 18px;
+    }
+
+    .snapshot-shell {
+      display: grid;
+      gap: 14px;
+      border: 1px solid rgba(46, 78, 46, 0.12);
+      border-radius: 20px;
+      background: rgba(255, 255, 255, 0.86);
+      padding: 18px;
+    }
+
+    .snapshot-controls {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, max-content));
+      gap: 10px;
+      align-items: end;
+    }
+
+    .snapshot-controls label {
+      display: grid;
+      gap: 6px;
+      color: #304132;
+      font-weight: 600;
+      font-size: 0.92rem;
+    }
+
+    .snapshot-controls input {
+      border: 1px solid rgba(44, 67, 49, 0.14);
+      border-radius: 12px;
+      background: rgba(255, 255, 255, 0.96);
+      color: #203024;
+      font: inherit;
+      padding: 10px 12px;
+    }
+
+    .snapshot-controls button {
+      justify-self: start;
+    }
+
+    .snapshot-error {
+      color: #8d3526;
+      font-weight: 600;
+    }
+
     @media (max-width: 640px) {
       main {
         padding-inline: 14px;
@@ -379,6 +460,10 @@ export class HaTaskManagerPanel extends LitElement {
 
       section {
         padding: 22px;
+      }
+
+      .snapshot-controls {
+        grid-template-columns: 1fr;
       }
     }
   `;
@@ -400,6 +485,9 @@ export class HaTaskManagerPanel extends LitElement {
         if (this.activeView === "setup" || this.activeView === "admin") {
           void this.loadSetupData();
         }
+        if (this.activeView === "admin") {
+          void this.loadScheduleSnapshot();
+        }
         this.startPendingPolling();
       }
     }
@@ -415,6 +503,10 @@ export class HaTaskManagerPanel extends LitElement {
 
       if ((this.activeView === "setup" || this.activeView === "admin") && !this.hasLoadedSetupData) {
         void this.loadSetupData();
+      }
+
+      if (this.activeView === "admin") {
+        void this.loadScheduleSnapshot();
       }
     }
   }
@@ -550,19 +642,56 @@ export class HaTaskManagerPanel extends LitElement {
         `;
       case "admin":
         return html`
-          <task-manager-task-builder-view
-            .tasks=${this.tasks}
-            .profiles=${this.profiles}
-            .profileMappings=${this.profileMappings}
-            .haUsers=${this.haUsers}
-            .unmappedTags=${this.unmappedTags}
-            .draftContextKey=${this.currentUserContextKey}
-            .handoffTaskId=${this.taskBuilderHandoffTaskId}
-            .saving=${this.taskBuilderSaving}
-            .statusMessage=${this.taskBuilderStatusMessage}
-            .errorMessage=${this.taskBuilderErrorMessage}
-            @save-task-request=${this.handleSaveTask}
-          ></task-manager-task-builder-view>
+          <div class="admin-shell">
+            <task-manager-task-builder-view
+              .tasks=${this.tasks}
+              .profiles=${this.profiles}
+              .profileMappings=${this.profileMappings}
+              .haUsers=${this.haUsers}
+              .unmappedTags=${this.unmappedTags}
+              .draftContextKey=${this.currentUserContextKey}
+              .handoffTaskId=${this.taskBuilderHandoffTaskId}
+              .saving=${this.taskBuilderSaving}
+              .statusMessage=${this.taskBuilderStatusMessage}
+              .errorMessage=${this.taskBuilderErrorMessage}
+              @save-task-request=${this.handleSaveTask}
+              @archive-task-request=${this.handleArchiveTask}
+              @restore-task-request=${this.handleRestoreTask}
+            ></task-manager-task-builder-view>
+            <div class="snapshot-shell">
+              <div class="snapshot-controls">
+                <label>
+                  Snapshot from
+                  <input
+                    type="date"
+                    data-snapshot-from-date
+                    .value=${this.snapshotFromDate}
+                    @input=${this.handleSnapshotFromDateInput}
+                  />
+                </label>
+                <label>
+                  Snapshot to
+                  <input
+                    type="date"
+                    data-snapshot-to-date
+                    .value=${this.snapshotToDate}
+                    @input=${this.handleSnapshotToDateInput}
+                  />
+                </label>
+                <button type="button" data-load-snapshot-range @click=${this.handleLoadSnapshotRange}>
+                  Load snapshot
+                </button>
+              </div>
+              ${this.snapshotError ? html`<div class="snapshot-error">${this.snapshotError}</div>` : nothing}
+              <task-manager-schedule-snapshot-view
+                .snapshotGroups=${this.snapshotGroups}
+                .tasksById=${this.tasksById}
+                .loading=${this.snapshotLoading}
+                .errorMessage=${this.snapshotError}
+                @edit-task-request=${this.handleSnapshotEditTask}
+              ></task-manager-schedule-snapshot-view>
+            </div>
+          </div>
         `;
       case "setup":
         return html`
@@ -647,11 +776,17 @@ export class HaTaskManagerPanel extends LitElement {
   private invalidateAdminMutations(): void {
     this.setupMutationRequestId += 1;
     this.taskSaveRequestId += 1;
+    this.snapshotLoadRequestId += 1;
     this.setupBusy = false;
     this.taskBuilderSaving = false;
     this.taskBuilderStatusMessage = "";
     this.taskBuilderErrorMessage = "";
     this.taskBuilderHandoffTaskId = "";
+    this.snapshotGroups = [];
+    this.snapshotLoading = false;
+    this.snapshotError = "";
+    this.snapshotFromDate = shiftIsoDate(todayIso(), -14);
+    this.snapshotToDate = shiftIsoDate(todayIso(), 30);
   }
 
   private beginCoreLoad(): {
@@ -736,6 +871,22 @@ export class HaTaskManagerPanel extends LitElement {
     };
   }
 
+  private beginSnapshotLoad(): {
+    hass: HomeAssistantLike;
+    requestId: number;
+    userContextKey: string;
+  } | null {
+    if (!this.hass || !this.canAccessAdminViews) {
+      return null;
+    }
+
+    return {
+      hass: this.hass,
+      requestId: ++this.snapshotLoadRequestId,
+      userContextKey: this.currentUserContextKey,
+    };
+  }
+
   private isCurrentCoreLoad(requestId: number, userContextKey: string): boolean {
     return requestId === this.coreLoadRequestId && userContextKey === this.currentUserContextKey;
   }
@@ -750,6 +901,10 @@ export class HaTaskManagerPanel extends LitElement {
 
   private isCurrentTaskSave(requestId: number, userContextKey: string): boolean {
     return requestId === this.taskSaveRequestId && userContextKey === this.currentUserContextKey;
+  }
+
+  private isCurrentSnapshotLoad(requestId: number, userContextKey: string): boolean {
+    return requestId === this.snapshotLoadRequestId && userContextKey === this.currentUserContextKey;
   }
 
   private isCurrentSetupWatchRefresh(
@@ -849,6 +1004,42 @@ export class HaTaskManagerPanel extends LitElement {
     } finally {
       if (this.isCurrentSetupLoad(loadRequest.requestId, loadRequest.userContextKey)) {
         this.setupLoading = false;
+      }
+    }
+  }
+
+  private async loadScheduleSnapshot(): Promise<void> {
+    const loadRequest = this.beginSnapshotLoad();
+    if (!loadRequest) {
+      return;
+    }
+
+    this.snapshotLoading = true;
+    this.snapshotError = "";
+
+    try {
+      if (this.snapshotFromDate > this.snapshotToDate) {
+        throw new Error("Snapshot range is invalid.");
+      }
+
+      const dueInstances = await fetchDueInstances(loadRequest.hass, {
+        fromDate: this.snapshotFromDate,
+        toDate: this.snapshotToDate,
+      });
+
+      if (!this.isCurrentSnapshotLoad(loadRequest.requestId, loadRequest.userContextKey)) {
+        return;
+      }
+
+      this.snapshotGroups = groupDueInstancesByDate(dueInstances);
+    } catch (error) {
+      if (this.isCurrentSnapshotLoad(loadRequest.requestId, loadRequest.userContextKey)) {
+        this.snapshotGroups = [];
+        this.snapshotError = errorMessage(error);
+      }
+    } finally {
+      if (this.isCurrentSnapshotLoad(loadRequest.requestId, loadRequest.userContextKey)) {
+        this.snapshotLoading = false;
       }
     }
   }
@@ -1050,6 +1241,28 @@ export class HaTaskManagerPanel extends LitElement {
     await this.loadAnalytics();
   };
 
+  private handleSnapshotFromDateInput = (event: Event): void => {
+    const target = event.currentTarget as HTMLInputElement;
+    this.snapshotFromDate = target.value;
+    this.snapshotError = "";
+  };
+
+  private handleSnapshotToDateInput = (event: Event): void => {
+    const target = event.currentTarget as HTMLInputElement;
+    this.snapshotToDate = target.value;
+    this.snapshotError = "";
+  };
+
+  private handleLoadSnapshotRange = (): void => {
+    if (this.snapshotFromDate > this.snapshotToDate) {
+      this.snapshotError = "Snapshot range is invalid.";
+      this.snapshotGroups = [];
+      return;
+    }
+
+    void this.loadScheduleSnapshot();
+  };
+
   private handleStartSetupWatch = (): void => {
     if (!this.hass || !this.canAccessAdminViews || this.setupLoading || this.setupWatchActive) {
       return;
@@ -1128,6 +1341,82 @@ export class HaTaskManagerPanel extends LitElement {
     }
   };
 
+  private handleArchiveTask = async (event: CustomEvent<{ taskId: string }>): Promise<void> => {
+    const mutationRequest = this.beginTaskSave();
+    if (!mutationRequest) {
+      return;
+    }
+
+    this.taskBuilderSaving = true;
+    this.taskBuilderStatusMessage = "";
+    this.taskBuilderErrorMessage = "";
+
+    try {
+      const updatedTask = await archiveTask(mutationRequest.hass, { taskId: event.detail.taskId });
+
+      if (!this.isCurrentTaskSave(mutationRequest.requestId, mutationRequest.userContextKey)) {
+        return;
+      }
+
+      this.tasks = upsertTask(this.tasks, updatedTask, updatedTask.id);
+      this.taskBuilderHandoffTaskId = updatedTask.id;
+      this.taskBuilderStatusMessage = `Archived ${updatedTask.title}.`;
+      await Promise.all([
+        this.loadCoreData(),
+        this.loadSetupData(),
+        this.loadScheduleSnapshot(),
+      ]);
+    } catch (error) {
+      if (this.isCurrentTaskSave(mutationRequest.requestId, mutationRequest.userContextKey)) {
+        this.taskBuilderErrorMessage = errorMessage(error);
+      }
+    } finally {
+      if (this.isCurrentTaskSave(mutationRequest.requestId, mutationRequest.userContextKey)) {
+        this.taskBuilderSaving = false;
+      }
+    }
+  };
+
+  private handleRestoreTask = async (event: CustomEvent<{ taskId: string }>): Promise<void> => {
+    const mutationRequest = this.beginTaskSave();
+    if (!mutationRequest) {
+      return;
+    }
+
+    this.taskBuilderSaving = true;
+    this.taskBuilderStatusMessage = "";
+    this.taskBuilderErrorMessage = "";
+
+    try {
+      const updatedTask = await restoreTask(mutationRequest.hass, { taskId: event.detail.taskId });
+
+      if (!this.isCurrentTaskSave(mutationRequest.requestId, mutationRequest.userContextKey)) {
+        return;
+      }
+
+      this.tasks = upsertTask(this.tasks, updatedTask, updatedTask.id);
+      this.taskBuilderHandoffTaskId = updatedTask.id;
+      this.taskBuilderStatusMessage = `Restored ${updatedTask.title}.`;
+      await Promise.all([
+        this.loadCoreData(),
+        this.loadSetupData(),
+        this.loadScheduleSnapshot(),
+      ]);
+    } catch (error) {
+      if (this.isCurrentTaskSave(mutationRequest.requestId, mutationRequest.userContextKey)) {
+        this.taskBuilderErrorMessage = errorMessage(error);
+      }
+    } finally {
+      if (this.isCurrentTaskSave(mutationRequest.requestId, mutationRequest.userContextKey)) {
+        this.taskBuilderSaving = false;
+      }
+    }
+  };
+
+  private handleSnapshotEditTask = (event: CustomEvent<{ taskId: string }>): void => {
+    this.taskBuilderHandoffTaskId = event.detail.taskId;
+  };
+
   private handleSaveTask = async (event: Event): Promise<void> => {
     const mutationRequest = this.beginTaskSave();
     if (!mutationRequest) {
@@ -1152,6 +1441,7 @@ export class HaTaskManagerPanel extends LitElement {
       await Promise.all([
         this.loadCoreData(),
         this.loadSetupData(),
+        this.loadScheduleSnapshot(),
       ]);
       if (
         this.isCurrentTaskSave(mutationRequest.requestId, mutationRequest.userContextKey) &&
@@ -1169,6 +1459,10 @@ export class HaTaskManagerPanel extends LitElement {
       }
     }
   };
+
+  private get tasksById(): Record<string, TaskDefinition> {
+    return Object.fromEntries(this.tasks.map((task) => [task.id, task] as const));
+  }
 
   private get canAccessAdminViews(): boolean {
     return this.hass?.user?.is_admin === true;
