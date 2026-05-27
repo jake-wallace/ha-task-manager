@@ -303,6 +303,8 @@ export class HaTaskManagerPanel extends LitElement {
 
   private snapshotLoadRequestId = 0;
 
+  private analyticsLoadRequestId = 0;
+
   private setupWatchSessionId = 0;
 
   private snoozedPendingAttemptIds = new Set<string>();
@@ -964,6 +966,7 @@ export class HaTaskManagerPanel extends LitElement {
     this.taskSaveRequestId += 1;
     this.destructiveMutationRequestId += 1;
     this.snapshotLoadRequestId += 1;
+    this.analyticsLoadRequestId += 1;
     this.setupBusy = false;
     this.taskBuilderSaving = false;
     this.taskBuilderStatusMessage = "";
@@ -978,6 +981,7 @@ export class HaTaskManagerPanel extends LitElement {
     this.destructiveDialog = null;
     this.destructiveBusy = false;
     this.destructiveError = "";
+    this.analyticsLoading = false;
     this.clearUndoBanner();
   }
 
@@ -1095,6 +1099,22 @@ export class HaTaskManagerPanel extends LitElement {
     };
   }
 
+  private beginAnalyticsLoad(): {
+    hass: HomeAssistantLike;
+    requestId: number;
+    userContextKey: string;
+  } | null {
+    if (!this.hass) {
+      return null;
+    }
+
+    return {
+      hass: this.hass,
+      requestId: ++this.analyticsLoadRequestId,
+      userContextKey: this.currentUserContextKey,
+    };
+  }
+
   private isCurrentCoreLoad(requestId: number, userContextKey: string): boolean {
     return requestId === this.coreLoadRequestId && userContextKey === this.currentUserContextKey;
   }
@@ -1120,6 +1140,10 @@ export class HaTaskManagerPanel extends LitElement {
 
   private isCurrentSnapshotLoad(requestId: number, userContextKey: string): boolean {
     return requestId === this.snapshotLoadRequestId && userContextKey === this.currentUserContextKey;
+  }
+
+  private isCurrentAnalyticsLoad(requestId: number, userContextKey: string): boolean {
+    return requestId === this.analyticsLoadRequestId && userContextKey === this.currentUserContextKey;
   }
 
   private isCurrentSetupWatchRefresh(
@@ -1319,32 +1343,47 @@ export class HaTaskManagerPanel extends LitElement {
   }
 
   private async loadAnalytics(): Promise<void> {
-    if (!this.hass) {
+    const loadRequest = this.beginAnalyticsLoad();
+    if (!loadRequest) {
       return;
     }
 
     if (this.profiles.length === 0) {
-      this.analyticsSnapshots = {};
+      if (this.isCurrentAnalyticsLoad(loadRequest.requestId, loadRequest.userContextKey)) {
+        this.analyticsSnapshots = {};
+        this.analyticsLoading = false;
+      }
       return;
     }
 
+    const includeDeletedTaskHistory = this.includeDeletedTaskHistory;
     this.analyticsLoading = true;
+
     try {
       const snapshots = await Promise.all(
         this.profiles.map(async (profile) => {
-          const snapshot = await fetchAnalytics(this.hass, {
+          const snapshot = await fetchAnalytics(loadRequest.hass, {
             profileId: profile.id,
             horizonDays: 30,
-            includeDeletedTaskHistory: this.includeDeletedTaskHistory,
+            includeDeletedTaskHistory,
           });
           return [profile.id, snapshot] as const;
         })
       );
+
+      if (!this.isCurrentAnalyticsLoad(loadRequest.requestId, loadRequest.userContextKey)) {
+        return;
+      }
+
       this.analyticsSnapshots = Object.fromEntries(snapshots);
     } catch (error) {
-      this.setPanelError(errorMessage(error));
+      if (this.isCurrentAnalyticsLoad(loadRequest.requestId, loadRequest.userContextKey)) {
+        this.setPanelError(errorMessage(error));
+      }
     } finally {
-      this.analyticsLoading = false;
+      if (this.isCurrentAnalyticsLoad(loadRequest.requestId, loadRequest.userContextKey)) {
+        this.analyticsLoading = false;
+      }
     }
   }
 
