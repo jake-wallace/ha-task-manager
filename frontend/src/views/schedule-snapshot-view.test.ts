@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it } from "vitest";
 
 import "./schedule-snapshot-view";
-import type { ScheduleSnapshotView, SnapshotGroup } from "./schedule-snapshot-view";
-import type { TaskDefinition, TaskDueInstance } from "../types/task";
+import type { ScheduleSnapshotView } from "./schedule-snapshot-view";
+import type { SnapshotGroup, TaskDefinition, TaskDueInstance } from "../types/task";
 
 function buildTask(overrides: Partial<TaskDefinition> = {}): TaskDefinition {
   return {
@@ -136,5 +136,66 @@ describe("task-manager-schedule-snapshot-view", () => {
 
     expect(editEvents).toHaveLength(1);
     expect(editEvents[0].detail).toEqual({ taskId: "task-1" });
+  });
+
+  it("shows required quick summary details and supports close action", async () => {
+    const element = document.createElement(
+      "task-manager-schedule-snapshot-view"
+    ) as ScheduleSnapshotView & {
+      snapshotFromDate?: string;
+      snapshotToDate?: string;
+      profileLabelsById?: Record<string, string>;
+    };
+
+    element.tasksById = {
+      "task-1": buildTask({
+        id: "task-1",
+        title: "Laundry",
+        assigned_profile_id: "profile-2",
+        active: false,
+        recurrence: {
+          frequency: "weekly",
+          days_of_week: [1, 3],
+          interval_days: 1,
+          day_of_month: null,
+        },
+      }),
+    };
+    element.profileLabelsById = {
+      "profile-2": "Jordan Profile",
+    };
+    element.snapshotFromDate = "2026-05-01";
+    element.snapshotToDate = "2026-05-31";
+    element.snapshotGroups = [
+      buildGroup("2026-05-20", [
+        buildDueInstance({ id: "due-1", task_id: "task-1", due_date: "2026-05-20" }),
+      ]),
+    ];
+
+    document.body.append(element);
+    await element.updateComplete;
+
+    const snapshotItemButton = element.shadowRoot?.querySelector(
+      '[data-snapshot-item="due-1"]'
+    ) as HTMLButtonElement | null;
+    snapshotItemButton?.click();
+    await element.updateComplete;
+
+    const summary = element.shadowRoot?.querySelector("[data-quick-summary]") as HTMLElement | null;
+    expect(summary).not.toBeNull();
+    expect(summary?.textContent).toContain("Laundry");
+    expect(summary?.textContent).toContain("Jordan Profile");
+    expect(summary?.textContent).toContain("Weekly on Mon, Wed");
+    expect(summary?.textContent).toContain("2026-05-20");
+    expect(summary?.textContent).toContain("2026-05-01 to 2026-05-31");
+    expect(summary?.textContent).toContain("Archived");
+
+    const closeButton = element.shadowRoot?.querySelector(
+      "[data-close-summary-button]"
+    ) as HTMLButtonElement | null;
+    closeButton?.click();
+    await element.updateComplete;
+
+    expect(element.shadowRoot?.querySelector("[data-quick-summary]")).toBeNull();
   });
 });

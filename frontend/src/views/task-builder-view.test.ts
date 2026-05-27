@@ -1,13 +1,13 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import "./task-builder-view";
 import type { TaskBuilderView } from "./task-builder-view";
 import type { TaskDefinition } from "../types/task";
 
-describe("task-manager-task-builder-view", () => {
-  const buildTask = (overrides: Partial<TaskDefinition> = {}): TaskDefinition => ({
+function buildTask(overrides: Partial<TaskDefinition> = {}): TaskDefinition {
+  return {
     id: "task-default",
-    title: "Default Task",
+    title: "Default task",
     description: "",
     recurrence: {
       frequency: "weekly",
@@ -23,88 +23,12 @@ describe("task-manager-task-builder-view", () => {
     created_at: "2026-05-10T00:00:00+00:00",
     updated_at: "2026-05-10T00:00:00+00:00",
     ...overrides,
-  });
+  };
+}
 
+describe("task-manager-task-builder-view", () => {
   afterEach(() => {
     document.body.innerHTML = "";
-  });
-
-  it("renders active and archived task sections separately", async () => {
-    const element = document.createElement("task-manager-task-builder-view") as TaskBuilderView;
-
-    element.tasks = [
-      buildTask({ id: "task-active", title: "Kitchen counters", active: true }),
-      buildTask({ id: "task-archived", title: "Garage cleanup", active: false }),
-    ];
-
-    document.body.append(element);
-    await element.updateComplete;
-
-    const activeSection = element.shadowRoot?.querySelector("[data-active-task-section]");
-    const archivedSection = element.shadowRoot?.querySelector("[data-archived-task-section]");
-
-    expect(activeSection).not.toBeNull();
-    expect(archivedSection).not.toBeNull();
-
-    const activeTitles = Array.from(
-      activeSection?.querySelectorAll("[data-task-title]") ?? []
-    ).map((title) => title.textContent?.trim());
-    const archivedTitles = Array.from(
-      archivedSection?.querySelectorAll("[data-task-title]") ?? []
-    ).map((title) => title.textContent?.trim());
-
-    expect(activeTitles).toEqual(["Kitchen counters"]);
-    expect(archivedTitles).toEqual(["Garage cleanup"]);
-  });
-
-  it("emits archive-task-request for an active task action", async () => {
-    const element = document.createElement("task-manager-task-builder-view") as TaskBuilderView;
-
-    element.tasks = [
-      buildTask({ id: "task-active", title: "Kitchen counters", active: true }),
-    ];
-
-    const archiveTaskEvents: CustomEvent[] = [];
-    element.addEventListener("archive-task-request", (event) => {
-      archiveTaskEvents.push(event as CustomEvent);
-    });
-
-    document.body.append(element);
-    await element.updateComplete;
-
-    const archiveButton = element.shadowRoot?.querySelector(
-      '[data-archive-task-button="task-active"]'
-    ) as HTMLButtonElement | null;
-
-    archiveButton?.click();
-
-    expect(archiveTaskEvents).toHaveLength(1);
-    expect(archiveTaskEvents[0].detail).toEqual({ taskId: "task-active" });
-  });
-
-  it("emits restore-task-request for an archived task action", async () => {
-    const element = document.createElement("task-manager-task-builder-view") as TaskBuilderView;
-
-    element.tasks = [
-      buildTask({ id: "task-archived", title: "Garage cleanup", active: false }),
-    ];
-
-    const restoreTaskEvents: CustomEvent[] = [];
-    element.addEventListener("restore-task-request", (event) => {
-      restoreTaskEvents.push(event as CustomEvent);
-    });
-
-    document.body.append(element);
-    await element.updateComplete;
-
-    const restoreButton = element.shadowRoot?.querySelector(
-      '[data-restore-task-button="task-archived"]'
-    ) as HTMLButtonElement | null;
-
-    restoreButton?.click();
-
-    expect(restoreTaskEvents).toHaveLength(1);
-    expect(restoreTaskEvents[0].detail).toEqual({ taskId: "task-archived" });
   });
 
   it("resets the new-task draft when the admin context changes", async () => {
@@ -183,6 +107,52 @@ describe("task-manager-task-builder-view", () => {
 
     expect(refreshedAssigneeSelect?.value).toBe("profile-3");
     expect(refreshedNfcTagSelect?.value).toBe("");
+  });
+
+  it("re-applies same handoff task id after draft context switches", async () => {
+    const element = document.createElement("task-manager-task-builder-view") as TaskBuilderView & {
+      draftContextKey?: string;
+      handoffTaskId?: string;
+    };
+
+    element.draftContextKey = "ha-user-1:admin";
+    element.tasks = [
+      buildTask({
+        id: "task-1",
+        title: "Laundry (Alex)",
+        assigned_profile_id: "profile-1",
+      }),
+    ];
+
+    document.body.append(element);
+    await element.updateComplete;
+
+    element.handoffTaskId = "task-1";
+    await element.updateComplete;
+
+    const initialTitleInput = element.shadowRoot?.querySelector("input[required]") as
+      | HTMLInputElement
+      | null;
+    expect(initialTitleInput?.value).toBe("Laundry (Alex)");
+
+    element.handoffTaskId = "";
+    element.tasks = [
+      buildTask({
+        id: "task-1",
+        title: "Laundry (Jordan)",
+        assigned_profile_id: "profile-2",
+      }),
+    ];
+    element.draftContextKey = "ha-user-2:admin";
+    await element.updateComplete;
+
+    element.handoffTaskId = "task-1";
+    await element.updateComplete;
+
+    const refreshedTitleInput = element.shadowRoot?.querySelector("input[required]") as
+      | HTMLInputElement
+      | null;
+    expect(refreshedTitleInput?.value).toBe("Laundry (Jordan)");
   });
 
   it("renders linked assignee labels and discovered NFC tag options", async () => {
@@ -306,5 +276,139 @@ describe("task-manager-task-builder-view", () => {
         configurable: true,
       });
     }
+  });
+
+  it("renders separate Active Tasks and Archived Tasks sections", async () => {
+    const element = document.createElement("task-manager-task-builder-view") as TaskBuilderView;
+    element.tasks = [
+      buildTask({
+        id: "task-active",
+        title: "Active task",
+        active: true,
+      }),
+      buildTask({
+        id: "task-archived",
+        title: "Archived task",
+        active: false,
+      }),
+    ];
+
+    document.body.append(element);
+    await element.updateComplete;
+
+    const sectionHeadings = Array.from(element.shadowRoot?.querySelectorAll("h4") ?? []).map(
+      (heading) => heading.textContent?.trim()
+    );
+    const activeList = element.shadowRoot?.querySelector("[data-active-task-list]") as HTMLElement | null;
+    const archivedList = element.shadowRoot?.querySelector("[data-archived-task-list]") as HTMLElement | null;
+
+    expect(sectionHeadings).toContain("Active Tasks");
+    expect(sectionHeadings).toContain("Archived Tasks");
+    expect(activeList?.textContent).toContain("Active task");
+    expect(activeList?.textContent).not.toContain("Archived task");
+    expect(archivedList?.textContent).toContain("Archived task");
+    expect(archivedList?.textContent).not.toContain("Active task");
+  });
+
+  it("does not render an active toggle in the generic save form", async () => {
+    const element = document.createElement("task-manager-task-builder-view") as TaskBuilderView;
+    element.tasks = [
+      buildTask({
+        id: "task-active",
+        title: "Active task",
+        active: true,
+      }),
+    ];
+
+    document.body.append(element);
+    await element.updateComplete;
+
+    expect(element.shadowRoot?.querySelector("input[type='checkbox']")).toBeNull();
+  });
+
+  it("requires confirmation before dispatching archive-task-request", async () => {
+    const element = document.createElement("task-manager-task-builder-view") as TaskBuilderView;
+    element.tasks = [
+      buildTask({
+        id: "task-active",
+        title: "Active task",
+        active: true,
+      }),
+      buildTask({
+        id: "task-archived",
+        title: "Archived task",
+        active: false,
+      }),
+    ];
+
+    const archiveEvents: Array<{ taskId: string }> = [];
+    const restoreEvents: Array<{ taskId: string }> = [];
+
+    element.addEventListener("archive-task-request", (event) => {
+      archiveEvents.push((event as CustomEvent<{ taskId: string }>).detail);
+    });
+    element.addEventListener("restore-task-request", (event) => {
+      restoreEvents.push((event as CustomEvent<{ taskId: string }>).detail);
+    });
+
+    document.body.append(element);
+    await element.updateComplete;
+
+    const archiveButton = element.shadowRoot?.querySelector(
+      "[data-archive-task-id='task-active']"
+    ) as HTMLButtonElement | null;
+
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
+
+    archiveButton?.click();
+
+    expect(confirmSpy).toHaveBeenCalledTimes(1);
+    expect(archiveEvents).toEqual([]);
+    expect(restoreEvents).toEqual([]);
+  });
+
+  it("emits archive-task-request when confirmed and restore-task-request directly", async () => {
+    const element = document.createElement("task-manager-task-builder-view") as TaskBuilderView;
+    element.tasks = [
+      buildTask({
+        id: "task-active",
+        title: "Active task",
+        active: true,
+      }),
+      buildTask({
+        id: "task-archived",
+        title: "Archived task",
+        active: false,
+      }),
+    ];
+
+    const archiveEvents: Array<{ taskId: string }> = [];
+    const restoreEvents: Array<{ taskId: string }> = [];
+
+    element.addEventListener("archive-task-request", (event) => {
+      archiveEvents.push((event as CustomEvent<{ taskId: string }>).detail);
+    });
+    element.addEventListener("restore-task-request", (event) => {
+      restoreEvents.push((event as CustomEvent<{ taskId: string }>).detail);
+    });
+
+    document.body.append(element);
+    await element.updateComplete;
+
+    const archiveButton = element.shadowRoot?.querySelector(
+      "[data-archive-task-id='task-active']"
+    ) as HTMLButtonElement | null;
+    const restoreButton = element.shadowRoot?.querySelector(
+      "[data-restore-task-id='task-archived']"
+    ) as HTMLButtonElement | null;
+
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+
+    archiveButton?.click();
+    restoreButton?.click();
+
+    expect(confirmSpy).toHaveBeenCalledTimes(1);
+    expect(archiveEvents).toEqual([{ taskId: "task-active" }]);
+    expect(restoreEvents).toEqual([{ taskId: "task-archived" }]);
   });
 });

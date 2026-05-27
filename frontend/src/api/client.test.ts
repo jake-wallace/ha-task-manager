@@ -1,11 +1,14 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  archiveTask,
   fetchHaUsers,
+  fetchDueInstances,
   fetchProfileMappings,
   fetchUnmappedNfcTags,
   importHaUser,
   linkNfcTag,
+  restoreTask,
   type HomeAssistantConnection,
   type LinkNfcTagOptions
 } from "./client";
@@ -64,6 +67,41 @@ describe("client admin setup helpers", () => {
         type: "ha_task_manager/link_nfc_tag",
         tag_id: "tag-abc123",
         task_id: "task-bathroom"
+      }
+    ]);
+  });
+
+  it("sends archive and restore task requests with task ids", async () => {
+    const { hass, sentMessages } = createConnection();
+
+    await archiveTask(hass, { taskId: "task-bathroom" });
+    await restoreTask(hass, { taskId: "task-bathroom" });
+
+    expect(sentMessages).toEqual([
+      {
+        type: "ha_task_manager/archive_task",
+        task_id: "task-bathroom"
+      },
+      {
+        type: "ha_task_manager/restore_task",
+        task_id: "task-bathroom"
+      }
+    ]);
+  });
+
+  it("includes to_date in due instances snapshot range queries", async () => {
+    const { hass, sentMessages } = createConnection();
+
+    await fetchDueInstances(hass, {
+      fromDate: "2026-05-10",
+      toDate: "2026-05-12"
+    });
+
+    expect(sentMessages).toEqual([
+      {
+        type: "ha_task_manager/due_instances",
+        from_date: "2026-05-10",
+        to_date: "2026-05-12"
       }
     ]);
   });
