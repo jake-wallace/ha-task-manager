@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 
 import "./task-builder-view";
 import type { TaskBuilderView } from "./task-builder-view";
@@ -326,7 +326,7 @@ describe("task-manager-task-builder-view", () => {
     expect(element.shadowRoot?.querySelector("input[type='checkbox']")).toBeNull();
   });
 
-  it("requires confirmation before dispatching archive-task-request", async () => {
+  it("emits delete-task-definition-request for an active task row", async () => {
     const element = document.createElement("task-manager-task-builder-view") as TaskBuilderView;
     element.tasks = [
       buildTask({
@@ -341,33 +341,25 @@ describe("task-manager-task-builder-view", () => {
       }),
     ];
 
-    const archiveEvents: Array<{ taskId: string }> = [];
-    const restoreEvents: Array<{ taskId: string }> = [];
+    const deleteEvents: Array<{ taskId: string }> = [];
 
-    element.addEventListener("archive-task-request", (event) => {
-      archiveEvents.push((event as CustomEvent<{ taskId: string }>).detail);
-    });
-    element.addEventListener("restore-task-request", (event) => {
-      restoreEvents.push((event as CustomEvent<{ taskId: string }>).detail);
+    element.addEventListener("delete-task-definition-request", (event) => {
+      deleteEvents.push((event as CustomEvent<{ taskId: string }>).detail);
     });
 
     document.body.append(element);
     await element.updateComplete;
 
-    const archiveButton = element.shadowRoot?.querySelector(
-      "[data-archive-task-id='task-active']"
+    const deleteButton = element.shadowRoot?.querySelector(
+      "[data-delete-task-id='task-active']"
     ) as HTMLButtonElement | null;
 
-    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
+    deleteButton?.click();
 
-    archiveButton?.click();
-
-    expect(confirmSpy).toHaveBeenCalledTimes(1);
-    expect(archiveEvents).toEqual([]);
-    expect(restoreEvents).toEqual([]);
+    expect(deleteEvents).toEqual([{ taskId: "task-active" }]);
   });
 
-  it("emits archive-task-request when confirmed and restore-task-request directly", async () => {
+  it("emits delete-task-definition-request for an archived task row", async () => {
     const element = document.createElement("task-manager-task-builder-view") as TaskBuilderView;
     element.tasks = [
       buildTask({
@@ -382,33 +374,21 @@ describe("task-manager-task-builder-view", () => {
       }),
     ];
 
-    const archiveEvents: Array<{ taskId: string }> = [];
-    const restoreEvents: Array<{ taskId: string }> = [];
+    const deleteEvents: Array<{ taskId: string }> = [];
 
-    element.addEventListener("archive-task-request", (event) => {
-      archiveEvents.push((event as CustomEvent<{ taskId: string }>).detail);
-    });
-    element.addEventListener("restore-task-request", (event) => {
-      restoreEvents.push((event as CustomEvent<{ taskId: string }>).detail);
+    element.addEventListener("delete-task-definition-request", (event) => {
+      deleteEvents.push((event as CustomEvent<{ taskId: string }>).detail);
     });
 
     document.body.append(element);
     await element.updateComplete;
 
-    const archiveButton = element.shadowRoot?.querySelector(
-      "[data-archive-task-id='task-active']"
-    ) as HTMLButtonElement | null;
-    const restoreButton = element.shadowRoot?.querySelector(
-      "[data-restore-task-id='task-archived']"
+    const deleteButton = element.shadowRoot?.querySelector(
+      "[data-delete-task-id='task-archived']"
     ) as HTMLButtonElement | null;
 
-    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+    deleteButton?.click();
 
-    archiveButton?.click();
-    restoreButton?.click();
-
-    expect(confirmSpy).toHaveBeenCalledTimes(1);
-    expect(archiveEvents).toEqual([{ taskId: "task-active" }]);
-    expect(restoreEvents).toEqual([{ taskId: "task-archived" }]);
+    expect(deleteEvents).toEqual([{ taskId: "task-archived" }]);
   });
 });
