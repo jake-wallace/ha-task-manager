@@ -682,6 +682,43 @@ async def test_delete_task_definition_requires_mapped_user(
     assert response["error"]["code"] == "mapping_required"
 
 
+async def test_delete_task_definition_succeeds_for_mapped_non_admin_user(
+    enable_custom_integrations,
+    hass,
+    hass_ws_client,
+    hass_read_only_user,
+    hass_read_only_access_token,
+) -> None:
+    store = TaskStore(hass)
+    await store.async_save_tasks({"tasks": [_task_payload()]})
+    await store.async_save_profiles(_mapped_profiles_payload(hass_read_only_user.id))
+
+    entry = MockConfigEntry(domain=DOMAIN, title="Task Manager")
+    entry.add_to_hass(hass)
+
+    assert await hass.config_entries.async_setup(entry.entry_id)
+
+    mapped_client = await hass_ws_client(hass, access_token=hass_read_only_access_token)
+    await mapped_client.send_json_auto_id(
+        {
+            "type": "ha_task_manager/delete_task_definition",
+            "task_id": "task-bathroom",
+            "confirm_text": "delete",
+        }
+    )
+    response = await mapped_client.receive_json()
+
+    assert response["success"] is True
+    assert response["result"]["task_id"] == "task-bathroom"
+    assert response["result"]["operation_id"]
+
+    stored_tasks = await store.async_load_tasks()
+    assert stored_tasks["tasks"] == []
+
+    controls = await store.async_load_controls()
+    assert controls["task_deletions"][0]["actor_ha_user_id"] == hass_read_only_user.id
+
+
 async def test_reset_analytics_baseline_and_undo_within_window(
     enable_custom_integrations,
     hass,
@@ -768,6 +805,50 @@ async def test_reset_analytics_baseline_requires_mapped_user(
 
     assert response["success"] is False
     assert response["error"]["code"] == "mapping_required"
+
+
+async def test_reset_analytics_baseline_and_undo_succeed_for_mapped_non_admin_user(
+    enable_custom_integrations,
+    hass,
+    hass_ws_client,
+    hass_read_only_user,
+    hass_read_only_access_token,
+) -> None:
+    store = TaskStore(hass)
+    await store.async_save_profiles(_mapped_profiles_payload(hass_read_only_user.id))
+
+    entry = MockConfigEntry(domain=DOMAIN, title="Task Manager")
+    entry.add_to_hass(hass)
+
+    assert await hass.config_entries.async_setup(entry.entry_id)
+
+    mapped_client = await hass_ws_client(hass, access_token=hass_read_only_access_token)
+    await mapped_client.send_json_auto_id(
+        {
+            "type": "ha_task_manager/reset_analytics_baseline",
+            "confirm_text": "delete",
+        }
+    )
+    reset_response = await mapped_client.receive_json()
+
+    assert reset_response["success"] is True
+    operation_id = reset_response["result"]["operation_id"]
+
+    await mapped_client.send_json_auto_id(
+        {
+            "type": "ha_task_manager/undo_analytics_baseline_reset",
+            "operation_id": operation_id,
+        }
+    )
+    undo_response = await mapped_client.receive_json()
+
+    assert undo_response["success"] is True
+    assert undo_response["result"]["operation_id"] == operation_id
+    assert undo_response["result"]["status"] == "undone"
+
+    controls = await store.async_load_controls()
+    assert controls["analytics_baseline_resets"][0]["actor_ha_user_id"] == hass_read_only_user.id
+    assert controls["analytics_baseline_resets"][0]["status"] == "undone"
 
 
 async def test_reset_analytics_baseline_requires_exact_confirm_text(

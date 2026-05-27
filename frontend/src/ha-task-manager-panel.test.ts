@@ -2074,6 +2074,102 @@ describe("ha-task-manager-panel", () => {
     });
   });
 
+  it("allows mapped non-admin users to reset analytics baseline", async () => {
+    const requestedMessages: WsMessage[] = [];
+
+    vi.spyOn(window, "setInterval").mockReturnValue(1);
+    vi.spyOn(window, "clearInterval").mockImplementation(() => undefined);
+
+    const hass = createHass(async (message) => {
+      requestedMessages.push(message);
+      const type = String(message.type);
+
+      switch (type) {
+        case "ha_task_manager/current_profile":
+          return {
+            ha_user_id: "ha-user-1",
+            mapped: true,
+            profile_id: "profile-1",
+            display_name: "Alex",
+          };
+        case "ha_task_manager/profiles":
+          return [
+            {
+              id: "profile-1",
+              display_name: "Alex",
+              avatar_url: "",
+              created_at: "2026-05-10T00:00:00+00:00",
+            },
+          ];
+        case "ha_task_manager/tasks":
+          return [taskFixture()];
+        case "ha_task_manager/due_instances":
+          return [];
+        case "ha_task_manager/pending_confirmations":
+          return [];
+        case "ha_task_manager/analytics":
+          return analyticsSnapshotFixture("profile-1", 0);
+        case "ha_task_manager/reset_analytics_baseline":
+          return {
+            operation_id: "reset-op-user-1",
+            new_baseline_at: "2026-05-14T09:10:00+00:00",
+            undo_expires_at: "2099-01-01T00:00:00+00:00",
+          };
+        default:
+          throw new Error(`Unexpected websocket call: ${type}`);
+      }
+    });
+
+    const panel = document.createElement("ha-task-manager-panel") as HaTaskManagerPanel;
+    panel.hass = hass;
+    document.body.append(panel);
+
+    await settlePanel(panel);
+
+    const analyticsButton = Array.from(panel.shadowRoot?.querySelectorAll("nav button") ?? []).find(
+      (button) => button.textContent?.trim() === "Analytics"
+    ) as HTMLButtonElement | undefined;
+    analyticsButton?.click();
+    await settlePanel(panel);
+
+    const analyticsView = panel.shadowRoot?.querySelector("task-manager-analytics-view") as HTMLElement | null;
+    const resetButton = analyticsView?.shadowRoot?.querySelector(
+      "[data-reset-analytics-baseline]"
+    ) as HTMLButtonElement | null;
+    resetButton?.click();
+    await settlePanel(panel);
+
+    const dialog = panel.shadowRoot?.querySelector("task-manager-destructive-confirm-dialog") as
+      | ({ open?: boolean } & HTMLElement)
+      | null;
+    expect(dialog?.open).toBe(true);
+
+    const confirmInput = dialog?.shadowRoot?.querySelector('[data-action="confirm-input"]') as
+      | HTMLInputElement
+      | null;
+    const confirmButton = dialog?.shadowRoot?.querySelector('[data-action="confirm"]') as
+      | HTMLButtonElement
+      | null;
+    if (!confirmInput || !confirmButton) {
+      throw new Error("Expected destructive confirmation controls");
+    }
+
+    confirmInput.value = "delete";
+    confirmInput.dispatchEvent(new Event("input"));
+    await settlePanel(panel);
+    confirmButton.click();
+    await settlePanel(panel);
+
+    const resetRequests = requestedMessages.filter(
+      (message) => String(message.type) === "ha_task_manager/reset_analytics_baseline"
+    );
+
+    expect(resetRequests).toHaveLength(1);
+    expect(resetRequests[0]).toMatchObject({
+      confirm_text: "delete",
+    });
+  });
+
   it("routes undo action button to matching websocket undo command", async () => {
     const requestedMessages: WsMessage[] = [];
 
@@ -3153,14 +3249,14 @@ describe("ha-task-manager-panel", () => {
     const refreshedState = panel as unknown as {
       destructiveBusy: boolean;
       destructiveError: string;
-      undoBanner: unknown;
+      undoBanners: unknown[];
       tasks: TaskDefinition[];
     };
 
     expect(panel.shadowRoot?.textContent).toContain("Signed in as Jordan");
     expect(refreshedState.destructiveBusy).toBe(false);
     expect(refreshedState.destructiveError).toBe("");
-    expect(refreshedState.undoBanner).toBeNull();
+    expect(refreshedState.undoBanners).toEqual([]);
     expect(refreshedState.tasks.map((task) => task.title)).toEqual(["Jordan Task"]);
 
     deleteRequest.resolve({
@@ -3173,7 +3269,7 @@ describe("ha-task-manager-panel", () => {
     const finalState = panel as unknown as {
       destructiveBusy: boolean;
       destructiveError: string;
-      undoBanner: unknown;
+      undoBanners: unknown[];
       tasks: TaskDefinition[];
     };
 
@@ -3181,7 +3277,7 @@ describe("ha-task-manager-panel", () => {
     expect(panel.shadowRoot?.textContent).not.toContain("Deleted Alex Task.");
     expect(finalState.destructiveBusy).toBe(false);
     expect(finalState.destructiveError).toBe("");
-    expect(finalState.undoBanner).toBeNull();
+    expect(finalState.undoBanners).toEqual([]);
     expect(finalState.tasks.map((task) => task.title)).toEqual(["Jordan Task"]);
   });
 
@@ -3296,13 +3392,13 @@ describe("ha-task-manager-panel", () => {
     const refreshedState = panel as unknown as {
       destructiveBusy: boolean;
       destructiveError: string;
-      undoBanner: unknown;
+      undoBanners: unknown[];
     };
 
     expect(panel.shadowRoot?.textContent).toContain("Signed in as Jordan");
     expect(refreshedState.destructiveBusy).toBe(false);
     expect(refreshedState.destructiveError).toBe("");
-    expect(refreshedState.undoBanner).toBeNull();
+    expect(refreshedState.undoBanners).toEqual([]);
 
     resetRequest.resolve({
       operation_id: "reset-op-stale",
@@ -3314,13 +3410,13 @@ describe("ha-task-manager-panel", () => {
     const finalState = panel as unknown as {
       destructiveBusy: boolean;
       destructiveError: string;
-      undoBanner: unknown;
+      undoBanners: unknown[];
     };
 
     expect(panel.shadowRoot?.textContent).toContain("Signed in as Jordan");
     expect(finalState.destructiveBusy).toBe(false);
     expect(finalState.destructiveError).toBe("");
-    expect(finalState.undoBanner).toBeNull();
+    expect(finalState.undoBanners).toEqual([]);
   });
 
   it("ignores a stale in-flight undo response after the hass user context changes", async () => {
@@ -3437,22 +3533,22 @@ describe("ha-task-manager-panel", () => {
     await Promise.resolve();
     await panel.updateComplete;
 
-    const pendingState = panel as unknown as { undoBusy: boolean };
-    expect(pendingState.undoBusy).toBe(true);
+    const pendingState = panel as unknown as { undoBusyOperationId: string };
+    expect(pendingState.undoBusyOperationId).toBe("delete-op-1");
 
     panel.hass = createAdminHass("ha-user-2");
     await settlePanel(panel);
 
     const refreshedState = panel as unknown as {
-      undoBusy: boolean;
-      undoError: string;
-      undoBanner: unknown;
+      undoBusyOperationId: string;
+      undoErrorsByOperationId: Record<string, string>;
+      undoBanners: unknown[];
     };
 
     expect(panel.shadowRoot?.textContent).toContain("Signed in as Jordan");
-    expect(refreshedState.undoBusy).toBe(false);
-    expect(refreshedState.undoError).toBe("");
-    expect(refreshedState.undoBanner).toBeNull();
+    expect(refreshedState.undoBusyOperationId).toBe("");
+    expect(refreshedState.undoErrorsByOperationId).toEqual({});
+    expect(refreshedState.undoBanners).toEqual([]);
 
     undoDeleteRequest.resolve({
       operation_id: "delete-op-1",
@@ -3462,15 +3558,15 @@ describe("ha-task-manager-panel", () => {
     await settlePanel(panel);
 
     const finalState = panel as unknown as {
-      undoBusy: boolean;
-      undoError: string;
-      undoBanner: unknown;
+      undoBusyOperationId: string;
+      undoErrorsByOperationId: Record<string, string>;
+      undoBanners: unknown[];
     };
 
     expect(panel.shadowRoot?.textContent).toContain("Signed in as Jordan");
-    expect(finalState.undoBusy).toBe(false);
-    expect(finalState.undoError).toBe("");
-    expect(finalState.undoBanner).toBeNull();
+    expect(finalState.undoBusyOperationId).toBe("");
+    expect(finalState.undoErrorsByOperationId).toEqual({});
+    expect(finalState.undoBanners).toEqual([]);
   });
 
   it("ignores direct save-task events after admin access is revoked", async () => {
