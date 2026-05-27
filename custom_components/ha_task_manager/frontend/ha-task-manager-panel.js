@@ -94790,6 +94790,7 @@ TaskBuilderView = __decorate([
 
 const SETUP_DISCOVERY_WATCH_INTERVAL_MS = 1500;
 const ISO_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+const MAX_RECENT_UNDO_ACTIONS = 5;
 const NAVIGATION_TABS = [
     {
         id: "my-tasks",
@@ -94910,9 +94911,9 @@ let HaTaskManagerPanel = class HaTaskManagerPanel extends i$1 {
         this.destructiveDialog = null;
         this.destructiveBusy = false;
         this.destructiveError = "";
-        this.undoBanner = null;
-        this.undoBusy = false;
-        this.undoError = "";
+        this.undoBanners = [];
+        this.undoBusyOperationId = "";
+        this.undoErrorsByOperationId = {};
         this.undoCountdownNow = Date.now();
         this.pendingPollHandle = null;
         this.setupWatchPollHandle = null;
@@ -95016,7 +95017,7 @@ let HaTaskManagerPanel = class HaTaskManagerPanel extends i$1 {
             await this.loadAnalytics();
         };
         this.handleDeleteTaskDefinitionRequest = (event) => {
-            if (!this.canAccessAdminViews) {
+            if (!this.canRunDestructiveActions) {
                 return;
             }
             const task = this.tasks.find((candidate) => candidate.id === event.detail.taskId);
@@ -95031,7 +95032,7 @@ let HaTaskManagerPanel = class HaTaskManagerPanel extends i$1 {
             this.destructiveError = "";
         };
         this.handleResetAnalyticsBaselineRequest = () => {
-            if (!this.canAccessAdminViews) {
+            if (!this.canRunDestructiveActions) {
                 return;
             }
             this.destructiveDialog = {
@@ -95097,17 +95098,20 @@ let HaTaskManagerPanel = class HaTaskManagerPanel extends i$1 {
                 }
             }
         };
-        this.handleUndoAction = async () => {
-            if (!this.undoBanner || this.isUndoExpired) {
+        this.handleUndoAction = async (operationId) => {
+            const undoState = this.undoBanners.find((candidate) => candidate.operationId === operationId);
+            if (!undoState || this.isUndoExpired(undoState)) {
                 return;
             }
             const mutationRequest = this.beginDestructiveMutation();
             if (!mutationRequest) {
                 return;
             }
-            const undoState = this.undoBanner;
-            this.undoBusy = true;
-            this.undoError = "";
+            this.undoBusyOperationId = operationId;
+            this.undoErrorsByOperationId = {
+                ...this.undoErrorsByOperationId,
+                [operationId]: "",
+            };
             try {
                 if (undoState.mode === "delete-task-definition") {
                     await undoDeleteTaskDefinition(mutationRequest.hass, {
@@ -95117,7 +95121,7 @@ let HaTaskManagerPanel = class HaTaskManagerPanel extends i$1 {
                         return;
                     }
                     await this.refreshAfterTaskMutation();
-                    this.clearUndoBanner();
+                    this.removeUndoBanner(operationId);
                 }
                 else {
                     await undoAnalyticsBaselineReset(mutationRequest.hass, {
@@ -95127,17 +95131,21 @@ let HaTaskManagerPanel = class HaTaskManagerPanel extends i$1 {
                         return;
                     }
                     await this.loadAnalytics();
-                    this.clearUndoBanner();
+                    this.removeUndoBanner(operationId);
                 }
             }
             catch (error) {
                 if (this.isCurrentDestructiveMutation(mutationRequest.requestId, mutationRequest.userContextKey)) {
-                    this.undoError = errorMessage(error);
+                    this.undoErrorsByOperationId = {
+                        ...this.undoErrorsByOperationId,
+                        [operationId]: errorMessage(error),
+                    };
                 }
             }
             finally {
-                if (this.isCurrentDestructiveMutation(mutationRequest.requestId, mutationRequest.userContextKey)) {
-                    this.undoBusy = false;
+                if (this.isCurrentDestructiveMutation(mutationRequest.requestId, mutationRequest.userContextKey) &&
+                    this.undoBusyOperationId === operationId) {
+                    this.undoBusyOperationId = "";
                 }
             }
         };
@@ -95422,7 +95430,7 @@ let HaTaskManagerPanel = class HaTaskManagerPanel extends i$1 {
             `)}
         </nav>
         ${this.panelError ? b `<div class="error-banner">${this.panelError}</div>` : A}
-        ${this.renderUndoBanner()}
+        ${this.renderUndoBanners()}
         <section>
           <h2>${activeTab?.label ?? "Task Manager"}</h2>
           <p class="subtitle">${activeTab?.description ?? ""}</p>
@@ -95461,31 +95469,38 @@ let HaTaskManagerPanel = class HaTaskManagerPanel extends i$1 {
       </main>
     `;
     }
-    renderUndoBanner() {
-        if (!this.undoBanner) {
+    renderUndoBanners() {
+        if (this.undoBanners.length === 0) {
             return A;
         }
-        return b `
-      <div class="undo-banner" data-destructive-undo-banner>
-        <h3>${this.undoBanner.summary}</h3>
-        <p class="undo-meta" data-destructive-undo-expiry>
-          ${this.isUndoExpired
-            ? `Undo expired at ${formatTimestamp(this.undoBanner.undoExpiresAt)}.`
-            : `Undo available for ${this.undoCountdownLabel} (expires ${formatTimestamp(this.undoBanner.undoExpiresAt)}).`}
-        </p>
-        <div class="undo-actions">
-          <button
-            type="button"
-            data-destructive-undo-button
-            ?disabled=${this.undoBusy || this.isUndoExpired}
-            @click=${this.handleUndoAction}
-          >
-            ${this.undoBusy ? "Undoing..." : "Undo"}
-          </button>
+        return b `${this.undoBanners.map((undoBanner) => {
+            const isUndoExpired = this.isUndoExpired(undoBanner);
+            const undoBusy = this.undoBusyOperationId === undoBanner.operationId;
+            const undoError = this.undoErrorsByOperationId[undoBanner.operationId] ?? "";
+            return b `
+        <div class="undo-banner" data-destructive-undo-banner>
+          <h3>${undoBanner.summary}</h3>
+          <p class="undo-meta" data-destructive-undo-expiry>
+            ${isUndoExpired
+                ? `Undo expired at ${formatTimestamp(undoBanner.undoExpiresAt)}.`
+                : `Undo available for ${this.undoCountdownLabel(undoBanner)} (expires ${formatTimestamp(undoBanner.undoExpiresAt)}).`}
+          </p>
+          <div class="undo-actions">
+            <button
+              type="button"
+              data-destructive-undo-button
+              ?disabled=${undoBusy || isUndoExpired}
+              @click=${() => {
+                void this.handleUndoAction(undoBanner.operationId);
+            }}
+            >
+              ${undoBusy ? "Undoing..." : "Undo"}
+            </button>
+          </div>
+          ${undoError ? b `<p class="undo-error">${undoError}</p>` : A}
         </div>
-        ${this.undoError ? b `<p class="undo-error">${this.undoError}</p>` : A}
-      </div>
-    `;
+      `;
+        })}`;
     }
     renderCurrentView(view) {
         if (this.coreLoading && this.tasks.length === 0) {
@@ -95648,12 +95663,12 @@ let HaTaskManagerPanel = class HaTaskManagerPanel extends i$1 {
     }
     startUndoCountdown() {
         this.stopUndoCountdown();
-        if (!this.undoBanner || this.isUndoExpired) {
+        if (this.undoBanners.every((undoState) => this.isUndoExpired(undoState))) {
             return;
         }
         this.undoCountdownHandle = window.setInterval(() => {
             this.undoCountdownNow = Date.now();
-            if (this.isUndoExpired) {
+            if (this.undoBanners.every((undoState) => this.isUndoExpired(undoState))) {
                 this.stopUndoCountdown();
             }
         }, 1000);
@@ -95692,7 +95707,7 @@ let HaTaskManagerPanel = class HaTaskManagerPanel extends i$1 {
         this.destructiveBusy = false;
         this.destructiveError = "";
         this.analyticsLoading = false;
-        this.clearUndoBanner();
+        this.clearUndoBanners();
     }
     beginCoreLoad() {
         if (!this.hass) {
@@ -95746,7 +95761,7 @@ let HaTaskManagerPanel = class HaTaskManagerPanel extends i$1 {
         };
     }
     beginDestructiveMutation() {
-        if (!this.hass || !this.canAccessAdminViews) {
+        if (!this.hass || !this.canRunDestructiveActions) {
             return null;
         }
         return {
@@ -96031,18 +96046,30 @@ let HaTaskManagerPanel = class HaTaskManagerPanel extends i$1 {
         };
     }
     registerUndoBanner(state) {
-        this.undoBanner = state;
-        this.undoBusy = false;
-        this.undoError = "";
+        this.undoBanners = [
+            state,
+            ...this.undoBanners.filter((undoState) => undoState.operationId !== state.operationId),
+        ].slice(0, MAX_RECENT_UNDO_ACTIONS);
+        this.undoBusyOperationId = "";
+        this.undoErrorsByOperationId = {};
         this.undoCountdownNow = Date.now();
         this.startUndoCountdown();
     }
-    clearUndoBanner() {
-        this.undoBanner = null;
-        this.undoBusy = false;
-        this.undoError = "";
+    clearUndoBanners() {
+        this.undoBanners = [];
+        this.undoBusyOperationId = "";
+        this.undoErrorsByOperationId = {};
         this.undoCountdownNow = Date.now();
         this.stopUndoCountdown();
+    }
+    removeUndoBanner(operationId) {
+        this.undoBanners = this.undoBanners.filter((undoState) => undoState.operationId !== operationId);
+        this.undoBusyOperationId = this.undoBusyOperationId === operationId ? "" : this.undoBusyOperationId;
+        const nextUndoErrors = { ...this.undoErrorsByOperationId };
+        delete nextUndoErrors[operationId];
+        this.undoErrorsByOperationId = nextUndoErrors;
+        this.undoCountdownNow = Date.now();
+        this.startUndoCountdown();
     }
     getSnapshotRangeValidationError() {
         if (!ISO_DATE_PATTERN.test(this.snapshotFromDate) || !ISO_DATE_PATTERN.test(this.snapshotToDate)) {
@@ -96084,21 +96111,21 @@ let HaTaskManagerPanel = class HaTaskManagerPanel extends i$1 {
         }
         return "This resets analytics baselines for trend comparisons. Undo is available for a limited time.";
     }
-    get undoRemainingSeconds() {
-        if (!this.undoBanner) {
-            return 0;
-        }
-        const expiresAt = new Date(this.undoBanner.undoExpiresAt).getTime();
+    undoRemainingSeconds(undoState) {
+        const expiresAt = new Date(undoState.undoExpiresAt).getTime();
         if (!Number.isFinite(expiresAt)) {
             return 0;
         }
         return Math.max(0, Math.ceil((expiresAt - this.undoCountdownNow) / 1000));
     }
-    get undoCountdownLabel() {
-        return formatRemainingSeconds(this.undoRemainingSeconds);
+    undoCountdownLabel(undoState) {
+        return formatRemainingSeconds(this.undoRemainingSeconds(undoState));
     }
-    get isUndoExpired() {
-        return this.undoRemainingSeconds <= 0;
+    isUndoExpired(undoState) {
+        return this.undoRemainingSeconds(undoState) <= 0;
+    }
+    get canRunDestructiveActions() {
+        return this.currentProfile?.mapped === true;
     }
     get currentUserContextKey() {
         const userId = this.hass?.user?.id ?? "";
@@ -96513,13 +96540,13 @@ __decorate([
 ], HaTaskManagerPanel.prototype, "destructiveError", void 0);
 __decorate([
     r()
-], HaTaskManagerPanel.prototype, "undoBanner", void 0);
+], HaTaskManagerPanel.prototype, "undoBanners", void 0);
 __decorate([
     r()
-], HaTaskManagerPanel.prototype, "undoBusy", void 0);
+], HaTaskManagerPanel.prototype, "undoBusyOperationId", void 0);
 __decorate([
     r()
-], HaTaskManagerPanel.prototype, "undoError", void 0);
+], HaTaskManagerPanel.prototype, "undoErrorsByOperationId", void 0);
 __decorate([
     r()
 ], HaTaskManagerPanel.prototype, "undoCountdownNow", void 0);
