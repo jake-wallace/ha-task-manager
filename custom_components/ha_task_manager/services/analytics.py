@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 from collections import Counter
-from collections.abc import Iterable, Mapping
-from datetime import date, timedelta
+from collections.abc import Iterable, Mapping, Set
+from datetime import date, datetime, timedelta
 
 from custom_components.ha_task_manager.models import (
     AttemptOutcome,
@@ -25,9 +25,26 @@ class AnalyticsService:
         projected_due_instances: Iterable[TaskDueInstance],
         task_assignments: Mapping[str, str],
         as_of: date,
+        effective_baseline_at: datetime | None = None,
+        include_deleted_task_history: bool = True,
+        existing_task_ids: Set[str] | None = None,
     ) -> ProfileAnalyticsSnapshot:
         """Compute a profile analytics snapshot from domain history and due data."""
-        history_list = list(history)
+        known_task_ids = set(existing_task_ids or set())
+        history_list = []
+        for record in history:
+            if (
+                effective_baseline_at is not None
+                and record.completed_at < effective_baseline_at
+            ):
+                continue
+            if (
+                not include_deleted_task_history
+                and record.task_id not in known_task_ids
+            ):
+                continue
+            history_list.append(record)
+
         due_instances = [
             instance
             for instance in projected_due_instances

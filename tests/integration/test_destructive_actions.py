@@ -680,3 +680,91 @@ async def test_delete_task_definition_requires_mapped_user(
 
     assert response["success"] is False
     assert response["error"]["code"] == "mapping_required"
+
+
+async def test_reset_analytics_baseline_and_undo_within_window(
+    enable_custom_integrations,
+    hass,
+    hass_ws_client,
+    hass_admin_user,
+) -> None:
+    store = TaskStore(hass)
+    await store.async_save_profiles(_mapped_profiles_payload(hass_admin_user.id))
+
+    entry = MockConfigEntry(domain=DOMAIN, title="Task Manager")
+    entry.add_to_hass(hass)
+
+    assert await hass.config_entries.async_setup(entry.entry_id)
+
+    client = await hass_ws_client(hass)
+    await client.send_json_auto_id(
+        {
+            "type": "ha_task_manager/reset_analytics_baseline",
+            "confirm_text": "delete",
+        }
+    )
+    reset_response = await client.receive_json()
+
+    assert reset_response["success"] is True
+    operation_id = reset_response["result"]["operation_id"]
+
+    await client.send_json_auto_id(
+        {
+            "type": "ha_task_manager/undo_analytics_baseline_reset",
+            "operation_id": operation_id,
+        }
+    )
+    undo_response = await client.receive_json()
+
+    assert undo_response["success"] is True
+    assert undo_response["result"] == {
+        "operation_id": operation_id,
+        "restored_baseline_at": None,
+        "status": "undone",
+    }
+
+    controls = await store.async_load_controls()
+    assert controls["analytics_baseline_state"] == {
+        "effective_baseline_at": None,
+    }
+    assert controls["analytics_baseline_resets"] == [
+        {
+            "id": operation_id,
+            "previous_baseline_at": None,
+            "new_baseline_at": controls["analytics_baseline_resets"][0]["new_baseline_at"],
+            "actor_ha_user_id": hass_admin_user.id,
+            "reset_at": controls["analytics_baseline_resets"][0]["reset_at"],
+            "undo_expires_at": controls["analytics_baseline_resets"][0][
+                "undo_expires_at"
+            ],
+            "status": "undone",
+        }
+    ]
+
+
+async def test_reset_analytics_baseline_requires_mapped_user(
+    enable_custom_integrations,
+    hass,
+    hass_ws_client,
+    hass_admin_user,
+    hass_read_only_access_token,
+) -> None:
+    store = TaskStore(hass)
+    await store.async_save_profiles(_mapped_profiles_payload(hass_admin_user.id))
+
+    entry = MockConfigEntry(domain=DOMAIN, title="Task Manager")
+    entry.add_to_hass(hass)
+
+    assert await hass.config_entries.async_setup(entry.entry_id)
+
+    unmapped_client = await hass_ws_client(hass, access_token=hass_read_only_access_token)
+    await unmapped_client.send_json_auto_id(
+        {
+            "type": "ha_task_manager/reset_analytics_baseline",
+            "confirm_text": "delete",
+        }
+    )
+    response = await unmapped_client.receive_json()
+
+    assert response["success"] is False
+    assert response["error"]["code"] == "mapping_required"
