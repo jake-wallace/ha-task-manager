@@ -145,7 +145,7 @@ export interface DeleteTaskDefinitionResult {
 
 export interface UndoDeleteTaskDefinitionResult {
   operation_id: string;
-  status: string;
+  status: "undone";
   task: TaskDefinition;
 }
 
@@ -158,5 +158,5 @@ export interface ResetAnalyticsBaselineResult {
 export interface UndoAnalyticsBaselineResetResult {
   operation_id: string;
   restored_baseline_at: string | null;
-  status: string;
+  status: "undone";
 }
