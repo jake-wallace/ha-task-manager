@@ -62,6 +62,7 @@ interface NavigationTab {
 }
 
 const SETUP_DISCOVERY_WATCH_INTERVAL_MS = 1500;
+const ISO_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
 const NAVIGATION_TABS: NavigationTab[] = [
   {
@@ -204,6 +205,8 @@ export class HaTaskManagerPanel extends LitElement {
   @state() private taskBuilderErrorMessage = "";
 
   @state() private taskBuilderHandoffTaskId = "";
+
+  @state() private taskBuilderHandoffRequestId = 0;
 
   @state() private snapshotFromDate = shiftIsoDate(todayIso(), -14);
 
@@ -651,6 +654,7 @@ export class HaTaskManagerPanel extends LitElement {
               .unmappedTags=${this.unmappedTags}
               .draftContextKey=${this.currentUserContextKey}
               .handoffTaskId=${this.taskBuilderHandoffTaskId}
+              .handoffRequestId=${this.taskBuilderHandoffRequestId}
               .saving=${this.taskBuilderSaving}
               .statusMessage=${this.taskBuilderStatusMessage}
               .errorMessage=${this.taskBuilderErrorMessage}
@@ -686,6 +690,9 @@ export class HaTaskManagerPanel extends LitElement {
               <task-manager-schedule-snapshot-view
                 .snapshotGroups=${this.snapshotGroups}
                 .tasksById=${this.tasksById}
+                .profileLabelsById=${this.profileLabelsById}
+                .snapshotFromDate=${this.snapshotFromDate}
+                .snapshotToDate=${this.snapshotToDate}
                 .loading=${this.snapshotLoading}
                 .errorMessage=${this.snapshotError}
                 @edit-task-request=${this.handleSnapshotEditTask}
@@ -782,6 +789,7 @@ export class HaTaskManagerPanel extends LitElement {
     this.taskBuilderStatusMessage = "";
     this.taskBuilderErrorMessage = "";
     this.taskBuilderHandoffTaskId = "";
+    this.taskBuilderHandoffRequestId = 0;
     this.snapshotGroups = [];
     this.snapshotLoading = false;
     this.snapshotError = "";
@@ -1018,8 +1026,9 @@ export class HaTaskManagerPanel extends LitElement {
     this.snapshotError = "";
 
     try {
-      if (this.snapshotFromDate > this.snapshotToDate) {
-        throw new Error("Snapshot range is invalid.");
+      const snapshotRangeError = this.getSnapshotRangeValidationError();
+      if (snapshotRangeError) {
+        throw new Error(snapshotRangeError);
       }
 
       const dueInstances = await fetchDueInstances(loadRequest.hass, {
@@ -1040,6 +1049,20 @@ export class HaTaskManagerPanel extends LitElement {
     } finally {
       if (this.isCurrentSnapshotLoad(loadRequest.requestId, loadRequest.userContextKey)) {
         this.snapshotLoading = false;
+      }
+    }
+  }
+
+  private async refreshAfterTaskMutation(): Promise<void> {
+    const refreshResults = await Promise.allSettled([
+      this.loadCoreData(),
+      this.loadSetupData(),
+      this.loadScheduleSnapshot(),
+    ]);
+
+    for (const result of refreshResults) {
+      if (result.status === "rejected") {
+        this.setPanelError(errorMessage(result.reason));
       }
     }
   }
@@ -1254,14 +1277,32 @@ export class HaTaskManagerPanel extends LitElement {
   };
 
   private handleLoadSnapshotRange = (): void => {
-    if (this.snapshotFromDate > this.snapshotToDate) {
-      this.snapshotError = "Snapshot range is invalid.";
+    const snapshotRangeError = this.getSnapshotRangeValidationError();
+    if (snapshotRangeError) {
+      this.snapshotError = snapshotRangeError;
       this.snapshotGroups = [];
       return;
     }
 
     void this.loadScheduleSnapshot();
   };
+
+  private getSnapshotRangeValidationError(): string | null {
+    if (!ISO_DATE_PATTERN.test(this.snapshotFromDate) || !ISO_DATE_PATTERN.test(this.snapshotToDate)) {
+      return "Snapshot range requires valid start and end dates.";
+    }
+
+    if (this.snapshotFromDate > this.snapshotToDate) {
+      return "Snapshot range is invalid.";
+    }
+
+    return null;
+  }
+
+  private queueTaskBuilderHandoff(taskId: string): void {
+    this.taskBuilderHandoffTaskId = taskId;
+    this.taskBuilderHandoffRequestId += 1;
+  }
 
   private handleStartSetupWatch = (): void => {
     if (!this.hass || !this.canAccessAdminViews || this.setupLoading || this.setupWatchActive) {
@@ -1359,13 +1400,9 @@ export class HaTaskManagerPanel extends LitElement {
       }
 
       this.tasks = upsertTask(this.tasks, updatedTask, updatedTask.id);
-      this.taskBuilderHandoffTaskId = updatedTask.id;
+      this.queueTaskBuilderHandoff(updatedTask.id);
       this.taskBuilderStatusMessage = `Archived ${updatedTask.title}.`;
-      await Promise.all([
-        this.loadCoreData(),
-        this.loadSetupData(),
-        this.loadScheduleSnapshot(),
-      ]);
+      await this.refreshAfterTaskMutation();
     } catch (error) {
       if (this.isCurrentTaskSave(mutationRequest.requestId, mutationRequest.userContextKey)) {
         this.taskBuilderErrorMessage = errorMessage(error);
@@ -1395,13 +1432,9 @@ export class HaTaskManagerPanel extends LitElement {
       }
 
       this.tasks = upsertTask(this.tasks, updatedTask, updatedTask.id);
-      this.taskBuilderHandoffTaskId = updatedTask.id;
+      this.queueTaskBuilderHandoff(updatedTask.id);
       this.taskBuilderStatusMessage = `Restored ${updatedTask.title}.`;
-      await Promise.all([
-        this.loadCoreData(),
-        this.loadSetupData(),
-        this.loadScheduleSnapshot(),
-      ]);
+      await this.refreshAfterTaskMutation();
     } catch (error) {
       if (this.isCurrentTaskSave(mutationRequest.requestId, mutationRequest.userContextKey)) {
         this.taskBuilderErrorMessage = errorMessage(error);
@@ -1414,7 +1447,7 @@ export class HaTaskManagerPanel extends LitElement {
   };
 
   private handleSnapshotEditTask = (event: CustomEvent<{ taskId: string }>): void => {
-    this.taskBuilderHandoffTaskId = event.detail.taskId;
+    this.queueTaskBuilderHandoff(event.detail.taskId);
   };
 
   private handleSaveTask = async (event: Event): Promise<void> => {
@@ -1424,25 +1457,26 @@ export class HaTaskManagerPanel extends LitElement {
     }
 
     const detail = (event as CustomEvent<{ task: TaskDefinition }>).detail;
+    const existingTask = this.tasks.find((task) => task.id === detail.task.id) ?? null;
+    const taskForSave: TaskDefinition = {
+      ...detail.task,
+      active: existingTask?.active ?? true,
+    };
     this.taskBuilderSaving = true;
     this.taskBuilderStatusMessage = "";
     this.taskBuilderErrorMessage = "";
 
     try {
-      const savedTask = await saveTask(mutationRequest.hass, detail.task);
+      const savedTask = await saveTask(mutationRequest.hass, taskForSave);
 
       if (!this.isCurrentTaskSave(mutationRequest.requestId, mutationRequest.userContextKey)) {
         return;
       }
 
       this.tasks = upsertTask(this.tasks, savedTask, detail.task.id);
-      this.taskBuilderHandoffTaskId = savedTask.id;
+      this.queueTaskBuilderHandoff(savedTask.id);
       this.taskBuilderStatusMessage = `Saved ${savedTask.title}.`;
-      await Promise.all([
-        this.loadCoreData(),
-        this.loadSetupData(),
-        this.loadScheduleSnapshot(),
-      ]);
+      await this.refreshAfterTaskMutation();
       if (
         this.isCurrentTaskSave(mutationRequest.requestId, mutationRequest.userContextKey) &&
         this.currentView === "analytics"
@@ -1462,6 +1496,12 @@ export class HaTaskManagerPanel extends LitElement {
 
   private get tasksById(): Record<string, TaskDefinition> {
     return Object.fromEntries(this.tasks.map((task) => [task.id, task] as const));
+  }
+
+  private get profileLabelsById(): Record<string, string> {
+    return Object.fromEntries(
+      this.profiles.map((profile) => [profile.id, profile.display_name] as const)
+    );
   }
 
   private get canAccessAdminViews(): boolean {

@@ -155,7 +155,20 @@ function fetchDueInstances(hass, query = {}) {
     return callApi(hass, {
         type: `${DOMAIN}/due_instances`,
         ...(query.fromDate ? { from_date: query.fromDate } : {}),
+        ...(query.toDate ? { to_date: query.toDate } : {}),
         ...(query.horizonDays !== undefined ? { horizon_days: query.horizonDays } : {})
+    });
+}
+function archiveTask(hass, options) {
+    return callApi(hass, {
+        type: `${DOMAIN}/archive_task`,
+        task_id: options.taskId
+    });
+}
+function restoreTask(hass, options) {
+    return callApi(hass, {
+        type: `${DOMAIN}/restore_task`,
+        task_id: options.taskId
     });
 }
 function saveTask(hass, task) {
@@ -92069,7 +92082,7 @@ const DATE_FORMATTER = new Intl.DateTimeFormat(undefined, {
 function formatDueDate(value) {
     return DATE_FORMATTER.format(new Date(`${value}T12:00:00`));
 }
-function describeRecurrence(task) {
+function describeRecurrence$1(task) {
     const { frequency, days_of_week, interval_days, day_of_month } = task.recurrence;
     if (frequency === "weekly") {
         if (days_of_week.length === 0) {
@@ -92125,7 +92138,7 @@ let TaskCard = class TaskCard extends i$1 {
           </div>
           <div>
             <dt>Recurs</dt>
-            <dd>${describeRecurrence(this.task)}</dd>
+            <dd>${describeRecurrence$1(this.task)}</dd>
           </div>
           <div>
             <dt>Assigned To</dt>
@@ -93175,6 +93188,345 @@ SetupView = __decorate([
     t("task-manager-setup-view")
 ], SetupView);
 
+function describeRecurrence(task) {
+    const { frequency, days_of_week, interval_days, day_of_month } = task.recurrence;
+    if (frequency === "weekly") {
+        if (days_of_week.length === 0) {
+            return "Weekly";
+        }
+        const weekdayLabels = days_of_week
+            .slice()
+            .sort((left, right) => left - right)
+            .map((day) => ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"][day - 1] ?? `Day ${day}`);
+        return `Weekly on ${weekdayLabels.join(", ")}`;
+    }
+    if (frequency === "monthly") {
+        return `Monthly on day ${day_of_month ?? 1}`;
+    }
+    if (frequency === "custom_days") {
+        return `Every ${interval_days} days`;
+    }
+    return "Daily";
+}
+let ScheduleSnapshotView = class ScheduleSnapshotView extends i$1 {
+    constructor() {
+        super(...arguments);
+        this.snapshotGroups = [];
+        this.tasksById = {};
+        this.profileLabelsById = {};
+        this.snapshotFromDate = "";
+        this.snapshotToDate = "";
+        this.loading = false;
+        this.errorMessage = "";
+        this.selectedDueInstanceId = "";
+        this.closeSummary = () => {
+            this.selectedDueInstanceId = "";
+        };
+    }
+    willUpdate(changedProperties) {
+        if (changedProperties.has("snapshotGroups") &&
+            this.selectedDueInstanceId &&
+            !this.findDueInstanceById(this.selectedDueInstanceId)) {
+            this.selectedDueInstanceId = "";
+        }
+    }
+    render() {
+        if (this.loading) {
+            return b `<div class="state">Loading schedule snapshot...</div>`;
+        }
+        if (this.errorMessage) {
+            return b `<div class="error">${this.errorMessage}</div>`;
+        }
+        if (this.snapshotGroups.length === 0) {
+            return b `<div class="empty">No schedule snapshots are available.</div>`;
+        }
+        const selection = this.selectedSnapshot;
+        return b `
+      <div class="layout">
+        <div class="groups">
+          ${this.snapshotGroups.map((group) => this.renderGroup(group))}
+        </div>
+        ${selection ? this.renderQuickSummary(selection) : this.renderEmptySummary()}
+      </div>
+    `;
+    }
+    renderGroup(group) {
+        return b `
+      <section class="group" data-snapshot-group=${group.date}>
+        <h3 data-snapshot-date>${group.date}</h3>
+        <ul>
+          ${group.items.map((item) => this.renderItem(item))}
+        </ul>
+      </section>
+    `;
+    }
+    renderItem(item) {
+        const task = this.tasksById[item.task_id];
+        const selected = this.selectedDueInstanceId === item.id;
+        return b `
+      <li>
+        <button
+          type="button"
+          class="item ${selected ? "is-selected" : ""}"
+          data-snapshot-item=${item.id}
+          @click=${() => this.selectDueInstance(item.id)}
+        >
+          <strong>${task?.title ?? "Unknown task"}</strong>
+          <span>Due ${item.due_date}</span>
+        </button>
+      </li>
+    `;
+    }
+    renderQuickSummary(selection) {
+        const task = selection.task;
+        const assigneeLabel = task
+            ? (this.profileLabelsById[task.assigned_profile_id] ?? task.assigned_profile_id)
+            : "Unknown profile";
+        const recurrenceLabel = task ? describeRecurrence(task) : "Unknown recurrence";
+        const activeStateLabel = task ? (task.active ? "Active" : "Archived") : "Unknown";
+        return b `
+      <aside class="summary" data-quick-summary>
+        <h4>${task?.title ?? "Task details"}</h4>
+        <p>Assignee: ${assigneeLabel}</p>
+        <p>Recurrence: ${recurrenceLabel}</p>
+        <p>Selected due date: ${selection.dueInstance.due_date}</p>
+        <p>Snapshot range: ${this.rangeContextLabel}</p>
+        <p>State: ${activeStateLabel}</p>
+        <div class="summary-actions">
+          <button
+            type="button"
+            data-edit-task-button
+            ?disabled=${!task}
+            @click=${() => this.emitEditTaskRequest(selection.dueInstance.task_id)}
+          >
+            Edit Task
+          </button>
+          <button
+            type="button"
+            data-close-summary-button
+            @click=${this.closeSummary}
+          >
+            Close
+          </button>
+        </div>
+      </aside>
+    `;
+    }
+    renderEmptySummary() {
+        return b `
+      <aside class="summary">
+        <p>Select a snapshot item to review details.</p>
+      </aside>
+    `;
+    }
+    selectDueInstance(dueInstanceId) {
+        this.selectedDueInstanceId = dueInstanceId;
+    }
+    emitEditTaskRequest(taskId) {
+        this.dispatchEvent(new CustomEvent("edit-task-request", {
+            detail: { taskId },
+            bubbles: true,
+            composed: true,
+        }));
+    }
+    get selectedSnapshot() {
+        if (!this.selectedDueInstanceId) {
+            return null;
+        }
+        for (const group of this.snapshotGroups) {
+            const dueInstance = group.items.find((item) => item.id === this.selectedDueInstanceId);
+            if (dueInstance) {
+                return {
+                    dueInstance,
+                    task: this.tasksById[dueInstance.task_id] ?? null,
+                };
+            }
+        }
+        return null;
+    }
+    get rangeContextLabel() {
+        if (this.snapshotFromDate && this.snapshotToDate) {
+            return `${this.snapshotFromDate} to ${this.snapshotToDate}`;
+        }
+        if (this.snapshotFromDate) {
+            return `From ${this.snapshotFromDate}`;
+        }
+        if (this.snapshotToDate) {
+            return `Through ${this.snapshotToDate}`;
+        }
+        return "Current range";
+    }
+    findDueInstanceById(dueInstanceId) {
+        for (const group of this.snapshotGroups) {
+            const dueInstance = group.items.find((item) => item.id === dueInstanceId);
+            if (dueInstance) {
+                return dueInstance;
+            }
+        }
+        return null;
+    }
+};
+ScheduleSnapshotView.styles = i$4 `
+    :host {
+      display: block;
+    }
+
+    .state,
+    .error,
+    .empty {
+      padding: 20px;
+      border-radius: 18px;
+    }
+
+    .state,
+    .empty {
+      background: rgba(245, 248, 242, 0.92);
+      color: #586a58;
+      border: 1px dashed rgba(47, 76, 53, 0.2);
+    }
+
+    .error {
+      background: rgba(195, 92, 67, 0.12);
+      color: #8d3526;
+      font-weight: 600;
+    }
+
+    .layout {
+      display: grid;
+      grid-template-columns: minmax(0, 1.4fr) minmax(240px, 1fr);
+      gap: 16px;
+      align-items: start;
+    }
+
+    .groups {
+      display: grid;
+      gap: 14px;
+    }
+
+    .group {
+      border-radius: 18px;
+      border: 1px solid rgba(44, 67, 49, 0.1);
+      background: rgba(255, 255, 255, 0.92);
+      padding: 14px;
+      display: grid;
+      gap: 10px;
+    }
+
+    .group h3 {
+      margin: 0;
+      font-size: 1rem;
+      color: #27402d;
+    }
+
+    .group ul {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+      display: grid;
+      gap: 8px;
+    }
+
+    .item {
+      width: 100%;
+      border: 1px solid rgba(44, 67, 49, 0.12);
+      border-radius: 14px;
+      background: rgba(248, 250, 246, 0.95);
+      padding: 10px 12px;
+      text-align: left;
+      cursor: pointer;
+      color: #253428;
+      display: grid;
+      gap: 4px;
+      font: inherit;
+    }
+
+    .item.is-selected {
+      border-color: rgba(47, 107, 71, 0.42);
+      background: rgba(235, 245, 236, 0.98);
+    }
+
+    .summary {
+      border-radius: 18px;
+      border: 1px solid rgba(44, 67, 49, 0.1);
+      background: rgba(250, 252, 248, 0.94);
+      padding: 16px;
+      display: grid;
+      gap: 10px;
+    }
+
+    .summary h4 {
+      margin: 0;
+      color: #1f3225;
+      font-size: 1rem;
+    }
+
+    .summary p {
+      margin: 0;
+      color: #627362;
+      line-height: 1.45;
+    }
+
+    .summary button {
+      appearance: none;
+      justify-self: start;
+      border: none;
+      border-radius: 999px;
+      cursor: pointer;
+      font: inherit;
+      font-weight: 700;
+      padding: 10px 14px;
+    }
+
+    .summary-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .summary button[data-edit-task-button] {
+      background: #2f6b47;
+      color: #f8faf6;
+    }
+
+    .summary button[data-close-summary-button] {
+      background: rgba(50, 75, 57, 0.1);
+      color: #294132;
+    }
+
+    @media (max-width: 840px) {
+      .layout {
+        grid-template-columns: 1fr;
+      }
+    }
+  `;
+__decorate([
+    n({ attribute: false })
+], ScheduleSnapshotView.prototype, "snapshotGroups", void 0);
+__decorate([
+    n({ attribute: false })
+], ScheduleSnapshotView.prototype, "tasksById", void 0);
+__decorate([
+    n({ attribute: false })
+], ScheduleSnapshotView.prototype, "profileLabelsById", void 0);
+__decorate([
+    n()
+], ScheduleSnapshotView.prototype, "snapshotFromDate", void 0);
+__decorate([
+    n()
+], ScheduleSnapshotView.prototype, "snapshotToDate", void 0);
+__decorate([
+    n({ type: Boolean })
+], ScheduleSnapshotView.prototype, "loading", void 0);
+__decorate([
+    n()
+], ScheduleSnapshotView.prototype, "errorMessage", void 0);
+__decorate([
+    r()
+], ScheduleSnapshotView.prototype, "selectedDueInstanceId", void 0);
+ScheduleSnapshotView = __decorate([
+    t("task-manager-schedule-snapshot-view")
+], ScheduleSnapshotView);
+
 const NEW_TASK_ID = "__new__";
 function todayIso$1() {
     const now = new Date();
@@ -93243,6 +93595,7 @@ let TaskBuilderView = class TaskBuilderView extends i$1 {
         this.haUsers = [];
         this.unmappedTags = [];
         this.handoffTaskId = "";
+        this.handoffRequestId = 0;
         this.draftContextKey = "";
         this.saving = false;
         this.statusMessage = "";
@@ -93251,6 +93604,7 @@ let TaskBuilderView = class TaskBuilderView extends i$1 {
         this.formState = emptyFormState([]);
         this.localError = "";
         this.lastAppliedHandoffTaskId = "";
+        this.lastAppliedHandoffRequestId = -1;
         this.addSkipWindow = () => {
             this.localError = "";
             this.formState = {
@@ -93268,19 +93622,27 @@ let TaskBuilderView = class TaskBuilderView extends i$1 {
         };
     }
     willUpdate(changedProperties) {
-        if (changedProperties.has("draftContextKey") && this.selectedTaskId === NEW_TASK_ID) {
-            this.localError = "";
-            this.formState = emptyFormState(this.profiles);
+        if (changedProperties.has("draftContextKey")) {
+            this.lastAppliedHandoffTaskId = "";
+            this.lastAppliedHandoffRequestId = -1;
+            if (this.selectedTaskId === NEW_TASK_ID) {
+                this.localError = "";
+                this.formState = emptyFormState(this.profiles);
+            }
         }
-        if ((changedProperties.has("handoffTaskId") || changedProperties.has("tasks")) &&
-            this.handoffTaskId &&
-            this.handoffTaskId !== this.lastAppliedHandoffTaskId) {
+        if ((changedProperties.has("handoffTaskId") ||
+            changedProperties.has("handoffRequestId") ||
+            changedProperties.has("tasks")) &&
+            this.handoffTaskId) {
             const handoffTask = this.tasks.find((task) => task.id === this.handoffTaskId);
-            if (handoffTask) {
+            const hasNewHandoffRequest = this.handoffRequestId !== this.lastAppliedHandoffRequestId;
+            const hasNewHandoffTask = this.handoffTaskId !== this.lastAppliedHandoffTaskId;
+            if (handoffTask && (hasNewHandoffRequest || hasNewHandoffTask)) {
                 this.selectedTaskId = handoffTask.id;
                 this.localError = "";
                 this.formState = formStateFromTask(handoffTask);
                 this.lastAppliedHandoffTaskId = handoffTask.id;
+                this.lastAppliedHandoffRequestId = this.handoffRequestId;
             }
         }
         if (changedProperties.has("profiles") && !this.formState.assignedProfileId) {
@@ -93323,6 +93685,8 @@ let TaskBuilderView = class TaskBuilderView extends i$1 {
         }
     }
     render() {
+        const activeTasks = this.tasks.filter((task) => task.active);
+        const archivedTasks = this.tasks.filter((task) => !task.active);
         return b `
       <div class="layout">
         <aside class="panel">
@@ -93332,16 +93696,67 @@ let TaskBuilderView = class TaskBuilderView extends i$1 {
             New Task
           </button>
           <div class="task-list">
-            ${this.tasks.map((task) => b `
-                <button
-                  class="task-button ${this.selectedTaskId === task.id ? "active" : ""}"
-                  type="button"
-                  @click=${() => this.selectTask(task.id)}
-                >
-                  <strong>${task.title}</strong>
-                  <div>${task.active ? "Active" : "Paused"} · ${task.recurrence.frequency}</div>
-                </button>
-              `)}
+            <section class="task-section" data-active-task-list>
+              <h4>Active Tasks</h4>
+              ${activeTasks.length === 0
+            ? b `<p class="section-empty">No active tasks yet.</p>`
+            : activeTasks.map((task) => b `
+                      <div class="task-row">
+                        <button
+                          class="task-button ${this.selectedTaskId === task.id ? "active" : ""}"
+                          type="button"
+                          @click=${() => this.selectTask(task.id)}
+                        >
+                          <strong>${task.title}</strong>
+                          <div>Active · ${task.recurrence.frequency}</div>
+                        </button>
+                        <button
+                          class="inline-action"
+                          type="button"
+                          data-archive-task-id=${task.id}
+                          ?disabled=${this.saving}
+                          @click=${() => this.requestArchive(task.id)}
+                        >
+                          Archive
+                        </button>
+                      </div>
+                    `)}
+            </section>
+            <section class="task-section" data-archived-task-list>
+              <h4>Archived Tasks</h4>
+              ${archivedTasks.length === 0
+            ? b `<p class="section-empty">No archived tasks.</p>`
+            : archivedTasks.map((task) => b `
+                      <div class="task-row">
+                        <button
+                          class="task-button ${this.selectedTaskId === task.id ? "active" : ""}"
+                          type="button"
+                          @click=${() => this.selectTask(task.id)}
+                        >
+                          <strong>${task.title}</strong>
+                          <div>Archived · ${task.recurrence.frequency}</div>
+                        </button>
+                        <button
+                          class="inline-action"
+                          type="button"
+                          data-edit-archived-task-id=${task.id}
+                          ?disabled=${this.saving}
+                          @click=${() => this.selectTask(task.id)}
+                        >
+                          Edit
+                        </button>
+                        <button
+                          class="inline-action"
+                          type="button"
+                          data-restore-task-id=${task.id}
+                          ?disabled=${this.saving}
+                          @click=${() => this.requestRestore(task.id)}
+                        >
+                          Restore
+                        </button>
+                      </div>
+                    `)}
+            </section>
           </div>
         </aside>
         <section class="panel">
@@ -93514,10 +93929,6 @@ let TaskBuilderView = class TaskBuilderView extends i$1 {
                 </button>
               </div>
             </label>
-            <label>
-              <input type="checkbox" .checked=${this.formState.active} @change=${this.toggleActive} />
-              Active task
-            </label>
             <div class="actions">
               <button class="ghost" type="button" ?disabled=${this.saving} @click=${this.resetForm}>
                 Reset
@@ -93545,6 +93956,27 @@ let TaskBuilderView = class TaskBuilderView extends i$1 {
         this.localError = "";
         this.formState = formStateFromTask(task);
     }
+    requestArchive(taskId) {
+        const taskTitle = this.tasks.find((task) => task.id === taskId)?.title ?? "this task";
+        const confirmed = typeof window.confirm !== "function"
+            ? true
+            : window.confirm(`Archive ${taskTitle}? You can restore it later.`);
+        if (!confirmed) {
+            return;
+        }
+        this.dispatchEvent(new CustomEvent("archive-task-request", {
+            detail: { taskId },
+            bubbles: true,
+            composed: true,
+        }));
+    }
+    requestRestore(taskId) {
+        this.dispatchEvent(new CustomEvent("restore-task-request", {
+            detail: { taskId },
+            bubbles: true,
+            composed: true,
+        }));
+    }
     setFrequency(frequency) {
         this.localError = "";
         this.formState = {
@@ -93562,14 +93994,6 @@ let TaskBuilderView = class TaskBuilderView extends i$1 {
         this.formState = {
             ...this.formState,
             daysOfWeek: days,
-        };
-    }
-    toggleActive(event) {
-        const target = event.currentTarget;
-        this.localError = "";
-        this.formState = {
-            ...this.formState,
-            active: target.checked,
         };
     }
     handleTextInput(field) {
@@ -93674,7 +94098,7 @@ let TaskBuilderView = class TaskBuilderView extends i$1 {
             })),
             assigned_profile_id: this.formState.assignedProfileId,
             nfc_tag_id: this.formState.nfcTagId.trim() || null,
-            active: this.formState.active,
+            active: existingTask?.active ?? true,
             start_date: this.formState.startDate,
             created_at: existingTask?.created_at ?? nowIsoString,
             updated_at: nowIsoString,
@@ -93747,6 +94171,30 @@ TaskBuilderView.styles = i$4 `
       display: grid;
       gap: 10px;
       margin-top: 16px;
+    }
+
+    .task-section {
+      display: grid;
+      gap: 8px;
+    }
+
+    .task-section h4 {
+      margin: 2px 0;
+      color: #28402e;
+      font-size: 0.95rem;
+    }
+
+    .section-empty {
+      margin: 0;
+      color: #6a7b6b;
+      font-size: 0.9rem;
+    }
+
+    .task-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto auto;
+      gap: 8px;
+      align-items: center;
     }
 
     .task-button,
@@ -93925,6 +94373,10 @@ TaskBuilderView.styles = i$4 `
       .row {
         grid-template-columns: 1fr;
       }
+
+      .task-row {
+        grid-template-columns: 1fr;
+      }
     }
   `;
 __decorate([
@@ -93945,6 +94397,9 @@ __decorate([
 __decorate([
     n({ attribute: false })
 ], TaskBuilderView.prototype, "handoffTaskId", void 0);
+__decorate([
+    n({ type: Number })
+], TaskBuilderView.prototype, "handoffRequestId", void 0);
 __decorate([
     n()
 ], TaskBuilderView.prototype, "draftContextKey", void 0);
@@ -93971,6 +94426,7 @@ TaskBuilderView = __decorate([
 ], TaskBuilderView);
 
 const SETUP_DISCOVERY_WATCH_INTERVAL_MS = 1500;
+const ISO_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const NAVIGATION_TABS = [
     {
         id: "my-tasks",
@@ -94023,6 +94479,21 @@ function upsertTask(tasks, savedTask, requestedTaskId) {
     const retainedTasks = tasks.filter((task) => task.id !== savedTask.id && task.id !== requestedTaskId);
     return [...retainedTasks, savedTask];
 }
+function groupDueInstancesByDate(dueInstances) {
+    const byDate = new Map();
+    for (const instance of dueInstances) {
+        if (!byDate.has(instance.due_date)) {
+            byDate.set(instance.due_date, []);
+        }
+        byDate.get(instance.due_date)?.push(instance);
+    }
+    return Array.from(byDate.entries())
+        .sort(([leftDate], [rightDate]) => leftDate.localeCompare(rightDate))
+        .map(([date, items]) => ({
+        date,
+        items: items.slice().sort((left, right) => left.id.localeCompare(right.id)),
+    }));
+}
 let HaTaskManagerPanel = class HaTaskManagerPanel extends i$1 {
     constructor() {
         super(...arguments);
@@ -94052,6 +94523,12 @@ let HaTaskManagerPanel = class HaTaskManagerPanel extends i$1 {
         this.taskBuilderStatusMessage = "";
         this.taskBuilderErrorMessage = "";
         this.taskBuilderHandoffTaskId = "";
+        this.taskBuilderHandoffRequestId = 0;
+        this.snapshotFromDate = shiftIsoDate(todayIso(), -14);
+        this.snapshotToDate = shiftIsoDate(todayIso(), 30);
+        this.snapshotGroups = [];
+        this.snapshotLoading = false;
+        this.snapshotError = "";
         this.pendingPollHandle = null;
         this.setupWatchPollHandle = null;
         this.hasLoadedInitialData = false;
@@ -94061,6 +94538,7 @@ let HaTaskManagerPanel = class HaTaskManagerPanel extends i$1 {
         this.setupWatchRefreshRequestId = 0;
         this.setupMutationRequestId = 0;
         this.taskSaveRequestId = 0;
+        this.snapshotLoadRequestId = 0;
         this.setupWatchSessionId = 0;
         this.snoozedPendingAttemptIds = new Set();
         this.panelErrorSource = null;
@@ -94145,6 +94623,25 @@ let HaTaskManagerPanel = class HaTaskManagerPanel extends i$1 {
         this.refreshAnalytics = async () => {
             await this.loadAnalytics();
         };
+        this.handleSnapshotFromDateInput = (event) => {
+            const target = event.currentTarget;
+            this.snapshotFromDate = target.value;
+            this.snapshotError = "";
+        };
+        this.handleSnapshotToDateInput = (event) => {
+            const target = event.currentTarget;
+            this.snapshotToDate = target.value;
+            this.snapshotError = "";
+        };
+        this.handleLoadSnapshotRange = () => {
+            const snapshotRangeError = this.getSnapshotRangeValidationError();
+            if (snapshotRangeError) {
+                this.snapshotError = snapshotRangeError;
+                this.snapshotGroups = [];
+                return;
+            }
+            void this.loadScheduleSnapshot();
+        };
         this.handleStartSetupWatch = () => {
             if (!this.hass || !this.canAccessAdminViews || this.setupLoading || this.setupWatchActive) {
                 return;
@@ -94210,27 +94707,90 @@ let HaTaskManagerPanel = class HaTaskManagerPanel extends i$1 {
                 }
             }
         };
+        this.handleArchiveTask = async (event) => {
+            const mutationRequest = this.beginTaskSave();
+            if (!mutationRequest) {
+                return;
+            }
+            this.taskBuilderSaving = true;
+            this.taskBuilderStatusMessage = "";
+            this.taskBuilderErrorMessage = "";
+            try {
+                const updatedTask = await archiveTask(mutationRequest.hass, { taskId: event.detail.taskId });
+                if (!this.isCurrentTaskSave(mutationRequest.requestId, mutationRequest.userContextKey)) {
+                    return;
+                }
+                this.tasks = upsertTask(this.tasks, updatedTask, updatedTask.id);
+                this.queueTaskBuilderHandoff(updatedTask.id);
+                this.taskBuilderStatusMessage = `Archived ${updatedTask.title}.`;
+                await this.refreshAfterTaskMutation();
+            }
+            catch (error) {
+                if (this.isCurrentTaskSave(mutationRequest.requestId, mutationRequest.userContextKey)) {
+                    this.taskBuilderErrorMessage = errorMessage(error);
+                }
+            }
+            finally {
+                if (this.isCurrentTaskSave(mutationRequest.requestId, mutationRequest.userContextKey)) {
+                    this.taskBuilderSaving = false;
+                }
+            }
+        };
+        this.handleRestoreTask = async (event) => {
+            const mutationRequest = this.beginTaskSave();
+            if (!mutationRequest) {
+                return;
+            }
+            this.taskBuilderSaving = true;
+            this.taskBuilderStatusMessage = "";
+            this.taskBuilderErrorMessage = "";
+            try {
+                const updatedTask = await restoreTask(mutationRequest.hass, { taskId: event.detail.taskId });
+                if (!this.isCurrentTaskSave(mutationRequest.requestId, mutationRequest.userContextKey)) {
+                    return;
+                }
+                this.tasks = upsertTask(this.tasks, updatedTask, updatedTask.id);
+                this.queueTaskBuilderHandoff(updatedTask.id);
+                this.taskBuilderStatusMessage = `Restored ${updatedTask.title}.`;
+                await this.refreshAfterTaskMutation();
+            }
+            catch (error) {
+                if (this.isCurrentTaskSave(mutationRequest.requestId, mutationRequest.userContextKey)) {
+                    this.taskBuilderErrorMessage = errorMessage(error);
+                }
+            }
+            finally {
+                if (this.isCurrentTaskSave(mutationRequest.requestId, mutationRequest.userContextKey)) {
+                    this.taskBuilderSaving = false;
+                }
+            }
+        };
+        this.handleSnapshotEditTask = (event) => {
+            this.queueTaskBuilderHandoff(event.detail.taskId);
+        };
         this.handleSaveTask = async (event) => {
             const mutationRequest = this.beginTaskSave();
             if (!mutationRequest) {
                 return;
             }
             const detail = event.detail;
+            const existingTask = this.tasks.find((task) => task.id === detail.task.id) ?? null;
+            const taskForSave = {
+                ...detail.task,
+                active: existingTask?.active ?? true,
+            };
             this.taskBuilderSaving = true;
             this.taskBuilderStatusMessage = "";
             this.taskBuilderErrorMessage = "";
             try {
-                const savedTask = await saveTask(mutationRequest.hass, detail.task);
+                const savedTask = await saveTask(mutationRequest.hass, taskForSave);
                 if (!this.isCurrentTaskSave(mutationRequest.requestId, mutationRequest.userContextKey)) {
                     return;
                 }
                 this.tasks = upsertTask(this.tasks, savedTask, detail.task.id);
-                this.taskBuilderHandoffTaskId = savedTask.id;
+                this.queueTaskBuilderHandoff(savedTask.id);
                 this.taskBuilderStatusMessage = `Saved ${savedTask.title}.`;
-                await Promise.all([
-                    this.loadCoreData(),
-                    this.loadSetupData(),
-                ]);
+                await this.refreshAfterTaskMutation();
                 if (this.isCurrentTaskSave(mutationRequest.requestId, mutationRequest.userContextKey) &&
                     this.currentView === "analytics") {
                     await this.loadAnalytics();
@@ -94265,6 +94825,9 @@ let HaTaskManagerPanel = class HaTaskManagerPanel extends i$1 {
                 if (this.activeView === "setup" || this.activeView === "admin") {
                     void this.loadSetupData();
                 }
+                if (this.activeView === "admin") {
+                    void this.loadScheduleSnapshot();
+                }
                 this.startPendingPolling();
             }
         }
@@ -94277,6 +94840,9 @@ let HaTaskManagerPanel = class HaTaskManagerPanel extends i$1 {
             }
             if ((this.activeView === "setup" || this.activeView === "admin") && !this.hasLoadedSetupData) {
                 void this.loadSetupData();
+            }
+            if (this.activeView === "admin") {
+                void this.loadScheduleSnapshot();
             }
         }
     }
@@ -94403,19 +94969,60 @@ let HaTaskManagerPanel = class HaTaskManagerPanel extends i$1 {
         `;
             case "admin":
                 return b `
-          <task-manager-task-builder-view
-            .tasks=${this.tasks}
-            .profiles=${this.profiles}
-            .profileMappings=${this.profileMappings}
-            .haUsers=${this.haUsers}
-            .unmappedTags=${this.unmappedTags}
-            .draftContextKey=${this.currentUserContextKey}
-            .handoffTaskId=${this.taskBuilderHandoffTaskId}
-            .saving=${this.taskBuilderSaving}
-            .statusMessage=${this.taskBuilderStatusMessage}
-            .errorMessage=${this.taskBuilderErrorMessage}
-            @save-task-request=${this.handleSaveTask}
-          ></task-manager-task-builder-view>
+          <div class="admin-shell">
+            <task-manager-task-builder-view
+              .tasks=${this.tasks}
+              .profiles=${this.profiles}
+              .profileMappings=${this.profileMappings}
+              .haUsers=${this.haUsers}
+              .unmappedTags=${this.unmappedTags}
+              .draftContextKey=${this.currentUserContextKey}
+              .handoffTaskId=${this.taskBuilderHandoffTaskId}
+              .handoffRequestId=${this.taskBuilderHandoffRequestId}
+              .saving=${this.taskBuilderSaving}
+              .statusMessage=${this.taskBuilderStatusMessage}
+              .errorMessage=${this.taskBuilderErrorMessage}
+              @save-task-request=${this.handleSaveTask}
+              @archive-task-request=${this.handleArchiveTask}
+              @restore-task-request=${this.handleRestoreTask}
+            ></task-manager-task-builder-view>
+            <div class="snapshot-shell">
+              <div class="snapshot-controls">
+                <label>
+                  Snapshot from
+                  <input
+                    type="date"
+                    data-snapshot-from-date
+                    .value=${this.snapshotFromDate}
+                    @input=${this.handleSnapshotFromDateInput}
+                  />
+                </label>
+                <label>
+                  Snapshot to
+                  <input
+                    type="date"
+                    data-snapshot-to-date
+                    .value=${this.snapshotToDate}
+                    @input=${this.handleSnapshotToDateInput}
+                  />
+                </label>
+                <button type="button" data-load-snapshot-range @click=${this.handleLoadSnapshotRange}>
+                  Load snapshot
+                </button>
+              </div>
+              ${this.snapshotError ? b `<div class="snapshot-error">${this.snapshotError}</div>` : A}
+              <task-manager-schedule-snapshot-view
+                .snapshotGroups=${this.snapshotGroups}
+                .tasksById=${this.tasksById}
+                .profileLabelsById=${this.profileLabelsById}
+                .snapshotFromDate=${this.snapshotFromDate}
+                .snapshotToDate=${this.snapshotToDate}
+                .loading=${this.snapshotLoading}
+                .errorMessage=${this.snapshotError}
+                @edit-task-request=${this.handleSnapshotEditTask}
+              ></task-manager-schedule-snapshot-view>
+            </div>
+          </div>
         `;
             case "setup":
                 return b `
@@ -94489,11 +95096,18 @@ let HaTaskManagerPanel = class HaTaskManagerPanel extends i$1 {
     invalidateAdminMutations() {
         this.setupMutationRequestId += 1;
         this.taskSaveRequestId += 1;
+        this.snapshotLoadRequestId += 1;
         this.setupBusy = false;
         this.taskBuilderSaving = false;
         this.taskBuilderStatusMessage = "";
         this.taskBuilderErrorMessage = "";
         this.taskBuilderHandoffTaskId = "";
+        this.taskBuilderHandoffRequestId = 0;
+        this.snapshotGroups = [];
+        this.snapshotLoading = false;
+        this.snapshotError = "";
+        this.snapshotFromDate = shiftIsoDate(todayIso(), -14);
+        this.snapshotToDate = shiftIsoDate(todayIso(), 30);
     }
     beginCoreLoad() {
         if (!this.hass) {
@@ -94546,6 +95160,16 @@ let HaTaskManagerPanel = class HaTaskManagerPanel extends i$1 {
             userContextKey: this.currentUserContextKey,
         };
     }
+    beginSnapshotLoad() {
+        if (!this.hass || !this.canAccessAdminViews) {
+            return null;
+        }
+        return {
+            hass: this.hass,
+            requestId: ++this.snapshotLoadRequestId,
+            userContextKey: this.currentUserContextKey,
+        };
+    }
     isCurrentCoreLoad(requestId, userContextKey) {
         return requestId === this.coreLoadRequestId && userContextKey === this.currentUserContextKey;
     }
@@ -94557,6 +95181,9 @@ let HaTaskManagerPanel = class HaTaskManagerPanel extends i$1 {
     }
     isCurrentTaskSave(requestId, userContextKey) {
         return requestId === this.taskSaveRequestId && userContextKey === this.currentUserContextKey;
+    }
+    isCurrentSnapshotLoad(requestId, userContextKey) {
+        return requestId === this.snapshotLoadRequestId && userContextKey === this.currentUserContextKey;
     }
     isCurrentSetupWatchRefresh(requestId, userContextKey, watchSessionId) {
         return (this.setupWatchActive &&
@@ -94643,6 +95270,51 @@ let HaTaskManagerPanel = class HaTaskManagerPanel extends i$1 {
             }
         }
     }
+    async loadScheduleSnapshot() {
+        const loadRequest = this.beginSnapshotLoad();
+        if (!loadRequest) {
+            return;
+        }
+        this.snapshotLoading = true;
+        this.snapshotError = "";
+        try {
+            const snapshotRangeError = this.getSnapshotRangeValidationError();
+            if (snapshotRangeError) {
+                throw new Error(snapshotRangeError);
+            }
+            const dueInstances = await fetchDueInstances(loadRequest.hass, {
+                fromDate: this.snapshotFromDate,
+                toDate: this.snapshotToDate,
+            });
+            if (!this.isCurrentSnapshotLoad(loadRequest.requestId, loadRequest.userContextKey)) {
+                return;
+            }
+            this.snapshotGroups = groupDueInstancesByDate(dueInstances);
+        }
+        catch (error) {
+            if (this.isCurrentSnapshotLoad(loadRequest.requestId, loadRequest.userContextKey)) {
+                this.snapshotGroups = [];
+                this.snapshotError = errorMessage(error);
+            }
+        }
+        finally {
+            if (this.isCurrentSnapshotLoad(loadRequest.requestId, loadRequest.userContextKey)) {
+                this.snapshotLoading = false;
+            }
+        }
+    }
+    async refreshAfterTaskMutation() {
+        const refreshResults = await Promise.allSettled([
+            this.loadCoreData(),
+            this.loadSetupData(),
+            this.loadScheduleSnapshot(),
+        ]);
+        for (const result of refreshResults) {
+            if (result.status === "rejected") {
+                this.setPanelError(errorMessage(result.reason));
+            }
+        }
+    }
     async pollSetupDiscoveries() {
         const refreshRequest = this.beginSetupWatchRefresh();
         if (!refreshRequest) {
@@ -94721,6 +95393,25 @@ let HaTaskManagerPanel = class HaTaskManagerPanel extends i$1 {
         const nextAttempt = this.pendingConfirmations.find((attempt) => forceOpen || !this.snoozedPendingAttemptIds.has(attempt.id));
         this.activeNfcAttemptId = nextAttempt?.id ?? "";
         this.nfcError = "";
+    }
+    getSnapshotRangeValidationError() {
+        if (!ISO_DATE_PATTERN.test(this.snapshotFromDate) || !ISO_DATE_PATTERN.test(this.snapshotToDate)) {
+            return "Snapshot range requires valid start and end dates.";
+        }
+        if (this.snapshotFromDate > this.snapshotToDate) {
+            return "Snapshot range is invalid.";
+        }
+        return null;
+    }
+    queueTaskBuilderHandoff(taskId) {
+        this.taskBuilderHandoffTaskId = taskId;
+        this.taskBuilderHandoffRequestId += 1;
+    }
+    get tasksById() {
+        return Object.fromEntries(this.tasks.map((task) => [task.id, task]));
+    }
+    get profileLabelsById() {
+        return Object.fromEntries(this.profiles.map((profile) => [profile.id, profile.display_name]));
     }
     get canAccessAdminViews() {
         return this.hass?.user?.is_admin === true;
@@ -94910,6 +95601,53 @@ HaTaskManagerPanel.styles = i$4 `
       margin-top: 18px;
     }
 
+    .admin-shell {
+      display: grid;
+      gap: 18px;
+    }
+
+    .snapshot-shell {
+      display: grid;
+      gap: 14px;
+      border: 1px solid rgba(46, 78, 46, 0.12);
+      border-radius: 20px;
+      background: rgba(255, 255, 255, 0.86);
+      padding: 18px;
+    }
+
+    .snapshot-controls {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, max-content));
+      gap: 10px;
+      align-items: end;
+    }
+
+    .snapshot-controls label {
+      display: grid;
+      gap: 6px;
+      color: #304132;
+      font-weight: 600;
+      font-size: 0.92rem;
+    }
+
+    .snapshot-controls input {
+      border: 1px solid rgba(44, 67, 49, 0.14);
+      border-radius: 12px;
+      background: rgba(255, 255, 255, 0.96);
+      color: #203024;
+      font: inherit;
+      padding: 10px 12px;
+    }
+
+    .snapshot-controls button {
+      justify-self: start;
+    }
+
+    .snapshot-error {
+      color: #8d3526;
+      font-weight: 600;
+    }
+
     @media (max-width: 640px) {
       main {
         padding-inline: 14px;
@@ -94922,6 +95660,10 @@ HaTaskManagerPanel.styles = i$4 `
 
       section {
         padding: 22px;
+      }
+
+      .snapshot-controls {
+        grid-template-columns: 1fr;
       }
     }
   `;
@@ -95006,6 +95748,24 @@ __decorate([
 __decorate([
     r()
 ], HaTaskManagerPanel.prototype, "taskBuilderHandoffTaskId", void 0);
+__decorate([
+    r()
+], HaTaskManagerPanel.prototype, "taskBuilderHandoffRequestId", void 0);
+__decorate([
+    r()
+], HaTaskManagerPanel.prototype, "snapshotFromDate", void 0);
+__decorate([
+    r()
+], HaTaskManagerPanel.prototype, "snapshotToDate", void 0);
+__decorate([
+    r()
+], HaTaskManagerPanel.prototype, "snapshotGroups", void 0);
+__decorate([
+    r()
+], HaTaskManagerPanel.prototype, "snapshotLoading", void 0);
+__decorate([
+    r()
+], HaTaskManagerPanel.prototype, "snapshotError", void 0);
 HaTaskManagerPanel = __decorate([
     t("ha-task-manager-panel")
 ], HaTaskManagerPanel);

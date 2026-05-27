@@ -106,6 +106,8 @@ export class TaskBuilderView extends LitElement {
 
   @property({ attribute: false }) public handoffTaskId = "";
 
+  @property({ type: Number }) public handoffRequestId = 0;
+
   @property() public draftContextKey = "";
 
   @property({ type: Boolean }) public saving = false;
@@ -121,6 +123,8 @@ export class TaskBuilderView extends LitElement {
   @state() private localError = "";
 
   private lastAppliedHandoffTaskId = "";
+
+  private lastAppliedHandoffRequestId = -1;
 
   static styles = css`
     :host {
@@ -156,6 +160,23 @@ export class TaskBuilderView extends LitElement {
       display: grid;
       gap: 10px;
       margin-top: 16px;
+    }
+
+    .task-section {
+      display: grid;
+      gap: 8px;
+    }
+
+    .task-section h4 {
+      margin: 2px 0;
+      color: #28402e;
+      font-size: 0.95rem;
+    }
+
+    .section-empty {
+      margin: 0;
+      color: #6a7b6b;
+      font-size: 0.9rem;
     }
 
     .task-row {
@@ -349,22 +370,32 @@ export class TaskBuilderView extends LitElement {
   `;
 
   protected willUpdate(changedProperties: Map<PropertyKey, unknown>): void {
-    if (changedProperties.has("draftContextKey") && this.selectedTaskId === NEW_TASK_ID) {
-      this.localError = "";
-      this.formState = emptyFormState(this.profiles);
+    if (changedProperties.has("draftContextKey")) {
+      this.lastAppliedHandoffTaskId = "";
+      this.lastAppliedHandoffRequestId = -1;
+
+      if (this.selectedTaskId === NEW_TASK_ID) {
+        this.localError = "";
+        this.formState = emptyFormState(this.profiles);
+      }
     }
 
     if (
-      (changedProperties.has("handoffTaskId") || changedProperties.has("tasks")) &&
-      this.handoffTaskId &&
-      this.handoffTaskId !== this.lastAppliedHandoffTaskId
+      (changedProperties.has("handoffTaskId") ||
+        changedProperties.has("handoffRequestId") ||
+        changedProperties.has("tasks")) &&
+      this.handoffTaskId
     ) {
       const handoffTask = this.tasks.find((task) => task.id === this.handoffTaskId);
-      if (handoffTask) {
+      const hasNewHandoffRequest = this.handoffRequestId !== this.lastAppliedHandoffRequestId;
+      const hasNewHandoffTask = this.handoffTaskId !== this.lastAppliedHandoffTaskId;
+
+      if (handoffTask && (hasNewHandoffRequest || hasNewHandoffTask)) {
         this.selectedTaskId = handoffTask.id;
         this.localError = "";
         this.formState = formStateFromTask(handoffTask);
         this.lastAppliedHandoffTaskId = handoffTask.id;
+        this.lastAppliedHandoffRequestId = this.handoffRequestId;
       }
     }
 
@@ -415,6 +446,9 @@ export class TaskBuilderView extends LitElement {
   }
 
   protected render() {
+    const activeTasks = this.tasks.filter((task) => task.active);
+    const archivedTasks = this.tasks.filter((task) => !task.active);
+
     return html`
       <div class="layout">
         <aside class="panel">
@@ -424,38 +458,71 @@ export class TaskBuilderView extends LitElement {
             New Task
           </button>
           <div class="task-list">
-            ${this.tasks.map(
-              (task) => html`
-                <div class="task-row">
-                  <button
-                    class="task-button ${this.selectedTaskId === task.id ? "active" : ""}"
-                    type="button"
-                    @click=${() => this.selectTask(task.id)}
-                  >
-                    <strong>${task.title}</strong>
-                    <div>${task.active ? "Active" : "Paused"} · ${task.recurrence.frequency}</div>
-                  </button>
-                  <button
-                    class="inline-action"
-                    type="button"
-                    data-archive-task-id=${task.id}
-                    ?disabled=${this.saving || !task.active}
-                    @click=${() => this.requestArchive(task.id)}
-                  >
-                    Archive
-                  </button>
-                  <button
-                    class="inline-action"
-                    type="button"
-                    data-restore-task-id=${task.id}
-                    ?disabled=${this.saving || task.active}
-                    @click=${() => this.requestRestore(task.id)}
-                  >
-                    Restore
-                  </button>
-                </div>
-              `
-            )}
+            <section class="task-section" data-active-task-list>
+              <h4>Active Tasks</h4>
+              ${activeTasks.length === 0
+                ? html`<p class="section-empty">No active tasks yet.</p>`
+                : activeTasks.map(
+                    (task) => html`
+                      <div class="task-row">
+                        <button
+                          class="task-button ${this.selectedTaskId === task.id ? "active" : ""}"
+                          type="button"
+                          @click=${() => this.selectTask(task.id)}
+                        >
+                          <strong>${task.title}</strong>
+                          <div>Active · ${task.recurrence.frequency}</div>
+                        </button>
+                        <button
+                          class="inline-action"
+                          type="button"
+                          data-archive-task-id=${task.id}
+                          ?disabled=${this.saving}
+                          @click=${() => this.requestArchive(task.id)}
+                        >
+                          Archive
+                        </button>
+                      </div>
+                    `
+                  )}
+            </section>
+            <section class="task-section" data-archived-task-list>
+              <h4>Archived Tasks</h4>
+              ${archivedTasks.length === 0
+                ? html`<p class="section-empty">No archived tasks.</p>`
+                : archivedTasks.map(
+                    (task) => html`
+                      <div class="task-row">
+                        <button
+                          class="task-button ${this.selectedTaskId === task.id ? "active" : ""}"
+                          type="button"
+                          @click=${() => this.selectTask(task.id)}
+                        >
+                          <strong>${task.title}</strong>
+                          <div>Archived · ${task.recurrence.frequency}</div>
+                        </button>
+                        <button
+                          class="inline-action"
+                          type="button"
+                          data-edit-archived-task-id=${task.id}
+                          ?disabled=${this.saving}
+                          @click=${() => this.selectTask(task.id)}
+                        >
+                          Edit
+                        </button>
+                        <button
+                          class="inline-action"
+                          type="button"
+                          data-restore-task-id=${task.id}
+                          ?disabled=${this.saving}
+                          @click=${() => this.requestRestore(task.id)}
+                        >
+                          Restore
+                        </button>
+                      </div>
+                    `
+                  )}
+            </section>
           </div>
         </aside>
         <section class="panel">
@@ -638,10 +705,6 @@ export class TaskBuilderView extends LitElement {
                 </button>
               </div>
             </label>
-            <label>
-              <input type="checkbox" .checked=${this.formState.active} @change=${this.toggleActive} />
-              Active task
-            </label>
             <div class="actions">
               <button class="ghost" type="button" ?disabled=${this.saving} @click=${this.resetForm}>
                 Reset
@@ -673,6 +736,16 @@ export class TaskBuilderView extends LitElement {
   }
 
   private requestArchive(taskId: string): void {
+    const taskTitle = this.tasks.find((task) => task.id === taskId)?.title ?? "this task";
+    const confirmed =
+      typeof window.confirm !== "function"
+        ? true
+        : window.confirm(`Archive ${taskTitle}? You can restore it later.`);
+
+    if (!confirmed) {
+      return;
+    }
+
     this.dispatchEvent(
       new CustomEvent("archive-task-request", {
         detail: { taskId },
@@ -710,15 +783,6 @@ export class TaskBuilderView extends LitElement {
     this.formState = {
       ...this.formState,
       daysOfWeek: days,
-    };
-  }
-
-  private toggleActive(event: Event): void {
-    const target = event.currentTarget as HTMLInputElement;
-    this.localError = "";
-    this.formState = {
-      ...this.formState,
-      active: target.checked,
     };
   }
 
@@ -855,7 +919,7 @@ export class TaskBuilderView extends LitElement {
       })),
       assigned_profile_id: this.formState.assignedProfileId,
       nfc_tag_id: this.formState.nfcTagId.trim() || null,
-      active: this.formState.active,
+      active: existingTask?.active ?? true,
       start_date: this.formState.startDate,
       created_at: existingTask?.created_at ?? nowIsoString,
       updated_at: nowIsoString,
