@@ -196,7 +196,35 @@ function fetchAnalytics(hass, query) {
         type: `${DOMAIN}/analytics`,
         profile_id: query.profileId,
         ...(query.asOf ? { as_of: query.asOf } : {}),
-        ...(query.horizonDays !== undefined ? { horizon_days: query.horizonDays } : {})
+        ...(query.horizonDays !== undefined ? { horizon_days: query.horizonDays } : {}),
+        ...(query.includeDeletedTaskHistory !== undefined
+            ? { include_deleted_task_history: query.includeDeletedTaskHistory }
+            : {})
+    });
+}
+function deleteTaskDefinition(hass, options) {
+    return callApi(hass, {
+        type: `${DOMAIN}/delete_task_definition`,
+        task_id: options.taskId,
+        confirm_text: options.confirmText
+    });
+}
+function undoDeleteTaskDefinition(hass, options) {
+    return callApi(hass, {
+        type: `${DOMAIN}/undo_delete_task_definition`,
+        operation_id: options.operationId
+    });
+}
+function resetAnalyticsBaseline(hass, options) {
+    return callApi(hass, {
+        type: `${DOMAIN}/reset_analytics_baseline`,
+        confirm_text: options.confirmText
+    });
+}
+function undoAnalyticsBaselineReset(hass, options) {
+    return callApi(hass, {
+        type: `${DOMAIN}/undo_analytics_baseline_reset`,
+        operation_id: options.operationId
     });
 }
 
@@ -366,6 +394,260 @@ __decorate([
 CompletionDialog = __decorate([
     t("task-manager-completion-dialog")
 ], CompletionDialog);
+
+const REQUIRED_CONFIRM_TEXT = "delete";
+let DestructiveConfirmDialog = class DestructiveConfirmDialog extends i$1 {
+    constructor() {
+        super(...arguments);
+        this.open = false;
+        this.title = "Confirm Destructive Action";
+        this.message = "This action cannot be undone after the undo window expires.";
+        this.busy = false;
+        this.errorMessage = "";
+        this.confirmText = "";
+    }
+    willUpdate(changedProperties) {
+        if (changedProperties.has("open") && !this.open) {
+            this.confirmText = "";
+        }
+    }
+    render() {
+        if (!this.open) {
+            return A;
+        }
+        return b `
+      <div class="backdrop" @click=${this.handleBackdropClick}>
+        <section class="dialog" role="dialog" aria-modal="true" @click=${this.stopPropagation}>
+          <header>
+            <h2>${this.title}</h2>
+            <button
+              class="close"
+              type="button"
+              aria-label="Close"
+              data-action="close"
+              ?disabled=${this.busy}
+              @click=${this.dismiss}
+            >
+              ×
+            </button>
+          </header>
+          <p>${this.message}</p>
+          <div class="hint">Type <strong>${REQUIRED_CONFIRM_TEXT}</strong> to enable confirmation.</div>
+          <label>
+            Confirmation text
+            <input
+              type="text"
+              data-action="confirm-input"
+              .value=${this.confirmText}
+              ?disabled=${this.busy}
+              @input=${this.handleInput}
+            />
+          </label>
+          ${this.errorMessage ? b `<div class="error">${this.errorMessage}</div>` : A}
+          <footer>
+            <button
+              class="ghost"
+              type="button"
+              data-action="dismiss"
+              ?disabled=${this.busy}
+              @click=${this.dismiss}
+            >
+              Cancel
+            </button>
+            <button
+              class="danger"
+              type="button"
+              data-action="confirm"
+              ?disabled=${this.busy || !this.isConfirmEnabled}
+              @click=${this.confirm}
+            >
+              ${this.busy ? "Applying..." : "Confirm"}
+            </button>
+          </footer>
+        </section>
+      </div>
+    `;
+    }
+    get isConfirmEnabled() {
+        return this.confirmText === REQUIRED_CONFIRM_TEXT;
+    }
+    handleInput(event) {
+        const input = event.target;
+        this.confirmText = input.value;
+    }
+    handleBackdropClick() {
+        if (!this.busy) {
+            this.dismiss();
+        }
+    }
+    stopPropagation(event) {
+        event.stopPropagation();
+    }
+    confirm() {
+        if (!this.isConfirmEnabled || this.busy) {
+            return;
+        }
+        this.dispatchEvent(new CustomEvent("confirm-request", {
+            bubbles: true,
+            composed: true,
+            detail: { confirmText: this.confirmText },
+        }));
+    }
+    dismiss() {
+        if (this.busy) {
+            return;
+        }
+        this.dispatchEvent(new CustomEvent("dismiss-request", { bubbles: true, composed: true }));
+    }
+};
+DestructiveConfirmDialog.styles = i$4 `
+    :host {
+      position: fixed;
+      inset: 0;
+      z-index: 22;
+      pointer-events: none;
+    }
+
+    .backdrop {
+      position: absolute;
+      inset: 0;
+      display: grid;
+      place-items: center;
+      padding: 20px;
+      background: rgba(21, 34, 25, 0.52);
+      backdrop-filter: blur(6px);
+      pointer-events: auto;
+    }
+
+    .dialog {
+      width: min(520px, 100%);
+      border-radius: 28px;
+      background: linear-gradient(180deg, rgba(254, 254, 252, 0.98), rgba(244, 247, 239, 0.98));
+      border: 1px solid rgba(45, 69, 50, 0.12);
+      box-shadow: 0 28px 60px rgba(18, 26, 20, 0.24);
+      padding: 24px;
+      color: #203024;
+    }
+
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    h2 {
+      margin: 0;
+      font-size: 1.35rem;
+      line-height: 1.2;
+    }
+
+    p {
+      margin: 10px 0 0;
+      color: #4f6151;
+      line-height: 1.55;
+    }
+
+    .hint {
+      margin-top: 16px;
+      padding: 14px;
+      border-radius: 18px;
+      background: rgba(195, 92, 67, 0.12);
+      color: #7f2d1f;
+      font-weight: 600;
+    }
+
+    label {
+      display: grid;
+      gap: 8px;
+      margin-top: 16px;
+      font-weight: 600;
+      color: #294132;
+    }
+
+    input {
+      border: 1px solid rgba(50, 75, 57, 0.28);
+      border-radius: 12px;
+      padding: 10px 12px;
+      font: inherit;
+      color: #203024;
+      background: rgba(255, 255, 255, 0.92);
+    }
+
+    .error {
+      margin-top: 14px;
+      padding: 12px 14px;
+      border-radius: 16px;
+      background: rgba(195, 92, 67, 0.12);
+      color: #8d3526;
+      font-weight: 600;
+    }
+
+    footer {
+      display: flex;
+      justify-content: flex-end;
+      gap: 12px;
+      margin-top: 22px;
+    }
+
+    button {
+      appearance: none;
+      border-radius: 999px;
+      border: none;
+      cursor: pointer;
+      font: inherit;
+      font-weight: 700;
+      padding: 10px 16px;
+    }
+
+    .close {
+      border-radius: 999px;
+      width: 34px;
+      height: 34px;
+      display: inline-grid;
+      place-items: center;
+      font-size: 1.1rem;
+      padding: 0;
+      background: rgba(50, 75, 57, 0.08);
+      color: #294132;
+    }
+
+    .ghost {
+      background: rgba(50, 75, 57, 0.08);
+      color: #294132;
+    }
+
+    .danger {
+      background: #8d3526;
+      color: #fff6f3;
+    }
+
+    button:disabled {
+      cursor: wait;
+      opacity: 0.6;
+    }
+  `;
+__decorate([
+    n({ type: Boolean })
+], DestructiveConfirmDialog.prototype, "open", void 0);
+__decorate([
+    n()
+], DestructiveConfirmDialog.prototype, "title", void 0);
+__decorate([
+    n()
+], DestructiveConfirmDialog.prototype, "message", void 0);
+__decorate([
+    n({ type: Boolean })
+], DestructiveConfirmDialog.prototype, "busy", void 0);
+__decorate([
+    n()
+], DestructiveConfirmDialog.prototype, "errorMessage", void 0);
+__decorate([
+    r()
+], DestructiveConfirmDialog.prototype, "confirmText", void 0);
+DestructiveConfirmDialog = __decorate([
+    t("task-manager-destructive-confirm-dialog")
+], DestructiveConfirmDialog);
 
 const DATE_TIME_FORMATTER = new Intl.DateTimeFormat(undefined, {
     month: "short",
@@ -91829,7 +92111,7 @@ AnalyticsChart = __decorate([
     t("task-manager-analytics-chart")
 ], AnalyticsChart);
 
-function formatTimestamp(value) {
+function formatTimestamp$1(value) {
     return new Intl.DateTimeFormat(undefined, {
         month: "short",
         day: "numeric",
@@ -91867,6 +92149,7 @@ let AnalyticsView = class AnalyticsView extends i$1 {
         super(...arguments);
         this.profiles = [];
         this.analytics = {};
+        this.includeDeletedTaskHistory = true;
         this.loading = false;
         this.errorMessage = "";
     }
@@ -91877,9 +92160,23 @@ let AnalyticsView = class AnalyticsView extends i$1 {
           <h2>Analytics</h2>
           <p>Snapshot metrics, trend lines, and completion mix update from the backend’s immutable history and due-instance projection.</p>
         </div>
-        <button type="button" ?disabled=${this.loading} @click=${this.refreshAnalytics}>
-          ${this.loading ? "Refreshing..." : "Refresh Analytics"}
-        </button>
+        <div class="toolbar-actions">
+          <label class="toggle">
+            <input
+              data-include-deleted-history-toggle
+              type="checkbox"
+              .checked=${this.includeDeletedTaskHistory}
+              @change=${this.handleIncludeDeletedHistoryChange}
+            />
+            Include deleted history
+          </label>
+          <button type="button" data-reset-analytics-baseline ?disabled=${this.loading} @click=${this.resetAnalyticsBaseline}>
+            Reset Baseline
+          </button>
+          <button type="button" ?disabled=${this.loading} @click=${this.refreshAnalytics}>
+            ${this.loading ? "Refreshing..." : "Refresh Analytics"}
+          </button>
+        </div>
       </div>
       ${this.errorMessage ? b `<div class="error">${this.errorMessage}</div>` : A}
       ${this.profiles.length === 0
@@ -91897,7 +92194,7 @@ let AnalyticsView = class AnalyticsView extends i$1 {
             <section class="panel">
               <div class="panel-header">
                 <h3>${profile.display_name}</h3>
-                <span>Computed ${formatTimestamp(snapshot.computed_at)}</span>
+                <span>Computed ${formatTimestamp$1(snapshot.computed_at)}</span>
               </div>
               <div class="kpis">
                 <div class="kpi"><strong>${snapshot.current_streak}</strong><span>Current streak</span></div>
@@ -91917,6 +92214,21 @@ let AnalyticsView = class AnalyticsView extends i$1 {
     }
     refreshAnalytics() {
         this.dispatchEvent(new CustomEvent("refresh-analytics", {
+            bubbles: true,
+            composed: true,
+        }));
+    }
+    resetAnalyticsBaseline() {
+        this.dispatchEvent(new CustomEvent("reset-analytics-baseline-request", {
+            bubbles: true,
+            composed: true,
+        }));
+    }
+    handleIncludeDeletedHistoryChange(event) {
+        const target = event.currentTarget;
+        this.includeDeletedTaskHistory = target.checked;
+        this.dispatchEvent(new CustomEvent("include-deleted-history-change", {
+            detail: { includeDeletedTaskHistory: this.includeDeletedTaskHistory },
             bubbles: true,
             composed: true,
         }));
@@ -91946,6 +92258,29 @@ AnalyticsView.styles = i$4 `
       color: #627362;
       max-width: 60ch;
       line-height: 1.55;
+    }
+
+    .toolbar-actions {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+
+    .toggle {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      color: #294132;
+      font-weight: 600;
+      white-space: nowrap;
+    }
+
+    .toggle input {
+      width: 16px;
+      height: 16px;
+      accent-color: #2f6b47;
     }
 
     button {
@@ -92064,6 +92399,9 @@ __decorate([
 __decorate([
     n({ attribute: false })
 ], AnalyticsView.prototype, "analytics", void 0);
+__decorate([
+    n({ type: Boolean })
+], AnalyticsView.prototype, "includeDeletedTaskHistory", void 0);
 __decorate([
     n({ type: Boolean })
 ], AnalyticsView.prototype, "loading", void 0);
@@ -93719,6 +94057,15 @@ let TaskBuilderView = class TaskBuilderView extends i$1 {
                         >
                           Archive
                         </button>
+                        <button
+                          class="inline-action"
+                          type="button"
+                          data-delete-task-id=${task.id}
+                          ?disabled=${this.saving}
+                          @click=${() => this.requestDelete(task.id)}
+                        >
+                          Delete
+                        </button>
                       </div>
                     `)}
             </section>
@@ -93753,6 +94100,15 @@ let TaskBuilderView = class TaskBuilderView extends i$1 {
                           @click=${() => this.requestRestore(task.id)}
                         >
                           Restore
+                        </button>
+                        <button
+                          class="inline-action"
+                          type="button"
+                          data-delete-task-id=${task.id}
+                          ?disabled=${this.saving}
+                          @click=${() => this.requestDelete(task.id)}
+                        >
+                          Delete
                         </button>
                       </div>
                     `)}
@@ -93977,6 +94333,13 @@ let TaskBuilderView = class TaskBuilderView extends i$1 {
             composed: true,
         }));
     }
+    requestDelete(taskId) {
+        this.dispatchEvent(new CustomEvent("delete-task-definition-request", {
+            detail: { taskId },
+            bubbles: true,
+            composed: true,
+        }));
+    }
     setFrequency(frequency) {
         this.localError = "";
         this.formState = {
@@ -94192,7 +94555,7 @@ TaskBuilderView.styles = i$4 `
 
     .task-row {
       display: grid;
-      grid-template-columns: minmax(0, 1fr) auto auto;
+      grid-template-columns: minmax(0, 1fr) repeat(3, auto);
       gap: 8px;
       align-items: center;
     }
@@ -94475,6 +94838,20 @@ function errorMessage(error) {
     }
     return String(error);
 }
+function formatTimestamp(value) {
+    return new Intl.DateTimeFormat(undefined, {
+        month: "short",
+        day: "numeric",
+        hour: "numeric",
+        minute: "2-digit",
+    }).format(new Date(value));
+}
+function formatRemainingSeconds(totalSeconds) {
+    const clampedTotalSeconds = Math.max(0, totalSeconds);
+    const minutes = Math.floor(clampedTotalSeconds / 60);
+    const seconds = clampedTotalSeconds % 60;
+    return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+}
 function upsertTask(tasks, savedTask, requestedTaskId) {
     const retainedTasks = tasks.filter((task) => task.id !== savedTask.id && task.id !== requestedTaskId);
     return [...retainedTasks, savedTask];
@@ -94501,6 +94878,7 @@ let HaTaskManagerPanel = class HaTaskManagerPanel extends i$1 {
         this.coreLoading = true;
         this.analyticsLoading = false;
         this.panelError = "";
+        this.includeDeletedTaskHistory = true;
         this.currentProfile = null;
         this.profiles = [];
         this.tasks = [];
@@ -94529,8 +94907,16 @@ let HaTaskManagerPanel = class HaTaskManagerPanel extends i$1 {
         this.snapshotGroups = [];
         this.snapshotLoading = false;
         this.snapshotError = "";
+        this.destructiveDialog = null;
+        this.destructiveBusy = false;
+        this.destructiveError = "";
+        this.undoBanner = null;
+        this.undoBusy = false;
+        this.undoError = "";
+        this.undoCountdownNow = Date.now();
         this.pendingPollHandle = null;
         this.setupWatchPollHandle = null;
+        this.undoCountdownHandle = null;
         this.hasLoadedInitialData = false;
         this.lastLoadedUserContextKey = "";
         this.coreLoadRequestId = 0;
@@ -94538,7 +94924,9 @@ let HaTaskManagerPanel = class HaTaskManagerPanel extends i$1 {
         this.setupWatchRefreshRequestId = 0;
         this.setupMutationRequestId = 0;
         this.taskSaveRequestId = 0;
+        this.destructiveMutationRequestId = 0;
         this.snapshotLoadRequestId = 0;
+        this.analyticsLoadRequestId = 0;
         this.setupWatchSessionId = 0;
         this.snoozedPendingAttemptIds = new Set();
         this.panelErrorSource = null;
@@ -94622,6 +95010,136 @@ let HaTaskManagerPanel = class HaTaskManagerPanel extends i$1 {
         };
         this.refreshAnalytics = async () => {
             await this.loadAnalytics();
+        };
+        this.handleIncludeDeletedHistoryChange = async (event) => {
+            this.includeDeletedTaskHistory = event.detail.includeDeletedTaskHistory;
+            await this.loadAnalytics();
+        };
+        this.handleDeleteTaskDefinitionRequest = (event) => {
+            if (!this.canAccessAdminViews) {
+                return;
+            }
+            const task = this.tasks.find((candidate) => candidate.id === event.detail.taskId);
+            if (!task) {
+                return;
+            }
+            this.destructiveDialog = {
+                mode: "delete-task-definition",
+                taskId: task.id,
+                taskTitle: task.title,
+            };
+            this.destructiveError = "";
+        };
+        this.handleResetAnalyticsBaselineRequest = () => {
+            if (!this.canAccessAdminViews) {
+                return;
+            }
+            this.destructiveDialog = {
+                mode: "reset-analytics-baseline",
+            };
+            this.destructiveError = "";
+        };
+        this.dismissDestructiveDialog = () => {
+            if (this.destructiveBusy) {
+                return;
+            }
+            this.destructiveDialog = null;
+            this.destructiveError = "";
+        };
+        this.handleDestructiveConfirm = async (event) => {
+            if (!this.destructiveDialog) {
+                return;
+            }
+            const mutationRequest = this.beginDestructiveMutation();
+            if (!mutationRequest) {
+                return;
+            }
+            this.destructiveBusy = true;
+            this.destructiveError = "";
+            try {
+                if (this.destructiveDialog.mode === "delete-task-definition") {
+                    const dialogState = this.destructiveDialog;
+                    const result = await deleteTaskDefinition(mutationRequest.hass, {
+                        taskId: dialogState.taskId,
+                        confirmText: event.detail.confirmText,
+                    });
+                    if (!this.isCurrentDestructiveMutation(mutationRequest.requestId, mutationRequest.userContextKey)) {
+                        return;
+                    }
+                    this.destructiveDialog = null;
+                    this.registerUndoBanner({
+                        mode: "delete-task-definition",
+                        operationId: result.operation_id,
+                        undoExpiresAt: result.undo_expires_at,
+                        summary: `Deleted ${dialogState.taskTitle}.`,
+                    });
+                    await this.refreshAfterTaskMutation();
+                    return;
+                }
+                const resetResult = await resetAnalyticsBaseline(mutationRequest.hass, {
+                    confirmText: event.detail.confirmText,
+                });
+                if (!this.isCurrentDestructiveMutation(mutationRequest.requestId, mutationRequest.userContextKey)) {
+                    return;
+                }
+                this.destructiveDialog = null;
+                this.registerUndoBanner(this.undoBannerFromResetResult(resetResult));
+                await this.loadAnalytics();
+            }
+            catch (error) {
+                if (this.isCurrentDestructiveMutation(mutationRequest.requestId, mutationRequest.userContextKey)) {
+                    this.destructiveError = errorMessage(error);
+                }
+            }
+            finally {
+                if (this.isCurrentDestructiveMutation(mutationRequest.requestId, mutationRequest.userContextKey)) {
+                    this.destructiveBusy = false;
+                }
+            }
+        };
+        this.handleUndoAction = async () => {
+            if (!this.undoBanner || this.isUndoExpired) {
+                return;
+            }
+            const mutationRequest = this.beginDestructiveMutation();
+            if (!mutationRequest) {
+                return;
+            }
+            const undoState = this.undoBanner;
+            this.undoBusy = true;
+            this.undoError = "";
+            try {
+                if (undoState.mode === "delete-task-definition") {
+                    await undoDeleteTaskDefinition(mutationRequest.hass, {
+                        operationId: undoState.operationId,
+                    });
+                    if (!this.isCurrentDestructiveMutation(mutationRequest.requestId, mutationRequest.userContextKey)) {
+                        return;
+                    }
+                    await this.refreshAfterTaskMutation();
+                    this.clearUndoBanner();
+                }
+                else {
+                    await undoAnalyticsBaselineReset(mutationRequest.hass, {
+                        operationId: undoState.operationId,
+                    });
+                    if (!this.isCurrentDestructiveMutation(mutationRequest.requestId, mutationRequest.userContextKey)) {
+                        return;
+                    }
+                    await this.loadAnalytics();
+                    this.clearUndoBanner();
+                }
+            }
+            catch (error) {
+                if (this.isCurrentDestructiveMutation(mutationRequest.requestId, mutationRequest.userContextKey)) {
+                    this.undoError = errorMessage(error);
+                }
+            }
+            finally {
+                if (this.isCurrentDestructiveMutation(mutationRequest.requestId, mutationRequest.userContextKey)) {
+                    this.undoBusy = false;
+                }
+            }
         };
         this.handleSnapshotFromDateInput = (event) => {
             const target = event.currentTarget;
@@ -94811,6 +95329,7 @@ let HaTaskManagerPanel = class HaTaskManagerPanel extends i$1 {
     updated(changedProperties) {
         if (changedProperties.has("hass") && this.hass) {
             this.stopSetupWatch();
+            this.stopUndoCountdown();
             const currentUserContextKey = this.currentUserContextKey;
             if (!this.hasLoadedInitialData || this.lastLoadedUserContextKey !== currentUserContextKey) {
                 this.invalidateAdminMutations();
@@ -94852,6 +95371,7 @@ let HaTaskManagerPanel = class HaTaskManagerPanel extends i$1 {
             window.clearInterval(this.pendingPollHandle);
             this.pendingPollHandle = null;
         }
+        this.stopUndoCountdown();
         super.disconnectedCallback();
     }
     render() {
@@ -94902,6 +95422,7 @@ let HaTaskManagerPanel = class HaTaskManagerPanel extends i$1 {
             `)}
         </nav>
         ${this.panelError ? b `<div class="error-banner">${this.panelError}</div>` : A}
+        ${this.renderUndoBanner()}
         <section>
           <h2>${activeTab?.label ?? "Task Manager"}</h2>
           <p class="subtitle">${activeTab?.description ?? ""}</p>
@@ -94928,7 +95449,42 @@ let HaTaskManagerPanel = class HaTaskManagerPanel extends i$1 {
           @confirm-request=${this.handleNfcConfirm}
           @dismiss-request=${this.dismissNfcDialog}
         ></task-manager-nfc-confirm-dialog>
+        <task-manager-destructive-confirm-dialog
+          .open=${this.destructiveDialog !== null}
+          .title=${this.destructiveDialogTitle}
+          .message=${this.destructiveDialogMessage}
+          .busy=${this.destructiveBusy}
+          .errorMessage=${this.destructiveError}
+          @confirm-request=${this.handleDestructiveConfirm}
+          @dismiss-request=${this.dismissDestructiveDialog}
+        ></task-manager-destructive-confirm-dialog>
       </main>
+    `;
+    }
+    renderUndoBanner() {
+        if (!this.undoBanner) {
+            return A;
+        }
+        return b `
+      <div class="undo-banner" data-destructive-undo-banner>
+        <h3>${this.undoBanner.summary}</h3>
+        <p class="undo-meta" data-destructive-undo-expiry>
+          ${this.isUndoExpired
+            ? `Undo expired at ${formatTimestamp(this.undoBanner.undoExpiresAt)}.`
+            : `Undo available for ${this.undoCountdownLabel} (expires ${formatTimestamp(this.undoBanner.undoExpiresAt)}).`}
+        </p>
+        <div class="undo-actions">
+          <button
+            type="button"
+            data-destructive-undo-button
+            ?disabled=${this.undoBusy || this.isUndoExpired}
+            @click=${this.handleUndoAction}
+          >
+            ${this.undoBusy ? "Undoing..." : "Undo"}
+          </button>
+        </div>
+        ${this.undoError ? b `<p class="undo-error">${this.undoError}</p>` : A}
+      </div>
     `;
     }
     renderCurrentView(view) {
@@ -94962,9 +95518,12 @@ let HaTaskManagerPanel = class HaTaskManagerPanel extends i$1 {
           <task-manager-analytics-view
             .profiles=${this.profiles}
             .analytics=${this.analyticsSnapshots}
+            .includeDeletedTaskHistory=${this.includeDeletedTaskHistory}
             .loading=${this.analyticsLoading}
             .errorMessage=${this.currentView === "analytics" ? "" : ""}
             @refresh-analytics=${this.refreshAnalytics}
+            @reset-analytics-baseline-request=${this.handleResetAnalyticsBaselineRequest}
+            @include-deleted-history-change=${this.handleIncludeDeletedHistoryChange}
           ></task-manager-analytics-view>
         `;
             case "admin":
@@ -94985,6 +95544,7 @@ let HaTaskManagerPanel = class HaTaskManagerPanel extends i$1 {
               @save-task-request=${this.handleSaveTask}
               @archive-task-request=${this.handleArchiveTask}
               @restore-task-request=${this.handleRestoreTask}
+              @delete-task-definition-request=${this.handleDeleteTaskDefinitionRequest}
             ></task-manager-task-builder-view>
             <div class="snapshot-shell">
               <div class="snapshot-controls">
@@ -95080,6 +95640,24 @@ let HaTaskManagerPanel = class HaTaskManagerPanel extends i$1 {
             this.setupWatchPollHandle = null;
         }
     }
+    stopUndoCountdown() {
+        if (this.undoCountdownHandle !== null) {
+            window.clearInterval(this.undoCountdownHandle);
+            this.undoCountdownHandle = null;
+        }
+    }
+    startUndoCountdown() {
+        this.stopUndoCountdown();
+        if (!this.undoBanner || this.isUndoExpired) {
+            return;
+        }
+        this.undoCountdownHandle = window.setInterval(() => {
+            this.undoCountdownNow = Date.now();
+            if (this.isUndoExpired) {
+                this.stopUndoCountdown();
+            }
+        }, 1000);
+    }
     clearPanelError() {
         this.panelError = "";
         this.panelErrorSource = null;
@@ -95096,7 +95674,9 @@ let HaTaskManagerPanel = class HaTaskManagerPanel extends i$1 {
     invalidateAdminMutations() {
         this.setupMutationRequestId += 1;
         this.taskSaveRequestId += 1;
+        this.destructiveMutationRequestId += 1;
         this.snapshotLoadRequestId += 1;
+        this.analyticsLoadRequestId += 1;
         this.setupBusy = false;
         this.taskBuilderSaving = false;
         this.taskBuilderStatusMessage = "";
@@ -95108,6 +95688,11 @@ let HaTaskManagerPanel = class HaTaskManagerPanel extends i$1 {
         this.snapshotError = "";
         this.snapshotFromDate = shiftIsoDate(todayIso(), -14);
         this.snapshotToDate = shiftIsoDate(todayIso(), 30);
+        this.destructiveDialog = null;
+        this.destructiveBusy = false;
+        this.destructiveError = "";
+        this.analyticsLoading = false;
+        this.clearUndoBanner();
     }
     beginCoreLoad() {
         if (!this.hass) {
@@ -95160,6 +95745,16 @@ let HaTaskManagerPanel = class HaTaskManagerPanel extends i$1 {
             userContextKey: this.currentUserContextKey,
         };
     }
+    beginDestructiveMutation() {
+        if (!this.hass || !this.canAccessAdminViews) {
+            return null;
+        }
+        return {
+            hass: this.hass,
+            requestId: ++this.destructiveMutationRequestId,
+            userContextKey: this.currentUserContextKey,
+        };
+    }
     beginSnapshotLoad() {
         if (!this.hass || !this.canAccessAdminViews) {
             return null;
@@ -95167,6 +95762,16 @@ let HaTaskManagerPanel = class HaTaskManagerPanel extends i$1 {
         return {
             hass: this.hass,
             requestId: ++this.snapshotLoadRequestId,
+            userContextKey: this.currentUserContextKey,
+        };
+    }
+    beginAnalyticsLoad() {
+        if (!this.hass) {
+            return null;
+        }
+        return {
+            hass: this.hass,
+            requestId: ++this.analyticsLoadRequestId,
             userContextKey: this.currentUserContextKey,
         };
     }
@@ -95182,8 +95787,15 @@ let HaTaskManagerPanel = class HaTaskManagerPanel extends i$1 {
     isCurrentTaskSave(requestId, userContextKey) {
         return requestId === this.taskSaveRequestId && userContextKey === this.currentUserContextKey;
     }
+    isCurrentDestructiveMutation(requestId, userContextKey) {
+        return (requestId === this.destructiveMutationRequestId &&
+            userContextKey === this.currentUserContextKey);
+    }
     isCurrentSnapshotLoad(requestId, userContextKey) {
         return requestId === this.snapshotLoadRequestId && userContextKey === this.currentUserContextKey;
+    }
+    isCurrentAnalyticsLoad(requestId, userContextKey) {
+        return requestId === this.analyticsLoadRequestId && userContextKey === this.currentUserContextKey;
     }
     isCurrentSetupWatchRefresh(requestId, userContextKey, watchSessionId) {
         return (this.setupWatchActive &&
@@ -95340,26 +95952,42 @@ let HaTaskManagerPanel = class HaTaskManagerPanel extends i$1 {
         }
     }
     async loadAnalytics() {
-        if (!this.hass) {
+        const loadRequest = this.beginAnalyticsLoad();
+        if (!loadRequest) {
             return;
         }
         if (this.profiles.length === 0) {
-            this.analyticsSnapshots = {};
+            if (this.isCurrentAnalyticsLoad(loadRequest.requestId, loadRequest.userContextKey)) {
+                this.analyticsSnapshots = {};
+                this.analyticsLoading = false;
+            }
             return;
         }
+        const includeDeletedTaskHistory = this.includeDeletedTaskHistory;
         this.analyticsLoading = true;
         try {
             const snapshots = await Promise.all(this.profiles.map(async (profile) => {
-                const snapshot = await fetchAnalytics(this.hass, { profileId: profile.id, horizonDays: 30 });
+                const snapshot = await fetchAnalytics(loadRequest.hass, {
+                    profileId: profile.id,
+                    horizonDays: 30,
+                    includeDeletedTaskHistory,
+                });
                 return [profile.id, snapshot];
             }));
+            if (!this.isCurrentAnalyticsLoad(loadRequest.requestId, loadRequest.userContextKey)) {
+                return;
+            }
             this.analyticsSnapshots = Object.fromEntries(snapshots);
         }
         catch (error) {
-            this.setPanelError(errorMessage(error));
+            if (this.isCurrentAnalyticsLoad(loadRequest.requestId, loadRequest.userContextKey)) {
+                this.setPanelError(errorMessage(error));
+            }
         }
         finally {
-            this.analyticsLoading = false;
+            if (this.isCurrentAnalyticsLoad(loadRequest.requestId, loadRequest.userContextKey)) {
+                this.analyticsLoading = false;
+            }
         }
     }
     async refreshPendingConfirmations() {
@@ -95394,6 +96022,28 @@ let HaTaskManagerPanel = class HaTaskManagerPanel extends i$1 {
         this.activeNfcAttemptId = nextAttempt?.id ?? "";
         this.nfcError = "";
     }
+    undoBannerFromResetResult(result) {
+        return {
+            mode: "reset-analytics-baseline",
+            operationId: result.operation_id,
+            undoExpiresAt: result.undo_expires_at,
+            summary: "Reset analytics baseline.",
+        };
+    }
+    registerUndoBanner(state) {
+        this.undoBanner = state;
+        this.undoBusy = false;
+        this.undoError = "";
+        this.undoCountdownNow = Date.now();
+        this.startUndoCountdown();
+    }
+    clearUndoBanner() {
+        this.undoBanner = null;
+        this.undoBusy = false;
+        this.undoError = "";
+        this.undoCountdownNow = Date.now();
+        this.stopUndoCountdown();
+    }
     getSnapshotRangeValidationError() {
         if (!ISO_DATE_PATTERN.test(this.snapshotFromDate) || !ISO_DATE_PATTERN.test(this.snapshotToDate)) {
             return "Snapshot range requires valid start and end dates.";
@@ -95415,6 +96065,40 @@ let HaTaskManagerPanel = class HaTaskManagerPanel extends i$1 {
     }
     get canAccessAdminViews() {
         return this.hass?.user?.is_admin === true;
+    }
+    get destructiveDialogTitle() {
+        if (!this.destructiveDialog) {
+            return "Confirm action";
+        }
+        if (this.destructiveDialog.mode === "delete-task-definition") {
+            return `Delete ${this.destructiveDialog.taskTitle}?`;
+        }
+        return "Reset analytics baseline?";
+    }
+    get destructiveDialogMessage() {
+        if (!this.destructiveDialog) {
+            return "";
+        }
+        if (this.destructiveDialog.mode === "delete-task-definition") {
+            return "This removes the task definition from active and archived lists. Undo is available for a limited time.";
+        }
+        return "This resets analytics baselines for trend comparisons. Undo is available for a limited time.";
+    }
+    get undoRemainingSeconds() {
+        if (!this.undoBanner) {
+            return 0;
+        }
+        const expiresAt = new Date(this.undoBanner.undoExpiresAt).getTime();
+        if (!Number.isFinite(expiresAt)) {
+            return 0;
+        }
+        return Math.max(0, Math.ceil((expiresAt - this.undoCountdownNow) / 1000));
+    }
+    get undoCountdownLabel() {
+        return formatRemainingSeconds(this.undoRemainingSeconds);
+    }
+    get isUndoExpired() {
+        return this.undoRemainingSeconds <= 0;
     }
     get currentUserContextKey() {
         const userId = this.hass?.user?.id ?? "";
@@ -95577,6 +96261,55 @@ HaTaskManagerPanel.styles = i$4 `
       font-weight: 600;
     }
 
+    .undo-banner {
+      margin-top: 12px;
+      display: grid;
+      gap: 10px;
+      padding: 14px 16px;
+      border-radius: 18px;
+      background: rgba(62, 138, 87, 0.12);
+      border: 1px solid rgba(47, 107, 71, 0.2);
+      color: #244b2f;
+    }
+
+    .undo-banner h3 {
+      margin: 0;
+      font-size: 1rem;
+    }
+
+    .undo-meta {
+      margin: 0;
+      color: #355b40;
+      font-size: 0.92rem;
+    }
+
+    .undo-actions {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    .undo-actions button {
+      border-radius: 999px;
+      border: none;
+      background: #2f6b47;
+      color: #f8faf6;
+      font-weight: 700;
+      padding: 9px 14px;
+    }
+
+    .undo-actions button:disabled {
+      cursor: not-allowed;
+      opacity: 0.5;
+    }
+
+    .undo-error {
+      margin: 0;
+      color: #8d3526;
+      font-weight: 600;
+    }
+
     section {
       padding: 28px;
       border: 1px solid rgba(46, 78, 46, 0.12);
@@ -95684,6 +96417,9 @@ __decorate([
 ], HaTaskManagerPanel.prototype, "panelError", void 0);
 __decorate([
     r()
+], HaTaskManagerPanel.prototype, "includeDeletedTaskHistory", void 0);
+__decorate([
+    r()
 ], HaTaskManagerPanel.prototype, "currentProfile", void 0);
 __decorate([
     r()
@@ -95766,6 +96502,27 @@ __decorate([
 __decorate([
     r()
 ], HaTaskManagerPanel.prototype, "snapshotError", void 0);
+__decorate([
+    r()
+], HaTaskManagerPanel.prototype, "destructiveDialog", void 0);
+__decorate([
+    r()
+], HaTaskManagerPanel.prototype, "destructiveBusy", void 0);
+__decorate([
+    r()
+], HaTaskManagerPanel.prototype, "destructiveError", void 0);
+__decorate([
+    r()
+], HaTaskManagerPanel.prototype, "undoBanner", void 0);
+__decorate([
+    r()
+], HaTaskManagerPanel.prototype, "undoBusy", void 0);
+__decorate([
+    r()
+], HaTaskManagerPanel.prototype, "undoError", void 0);
+__decorate([
+    r()
+], HaTaskManagerPanel.prototype, "undoCountdownNow", void 0);
 HaTaskManagerPanel = __decorate([
     t("ha-task-manager-panel")
 ], HaTaskManagerPanel);
