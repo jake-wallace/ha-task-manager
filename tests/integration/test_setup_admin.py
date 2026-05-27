@@ -846,7 +846,7 @@ async def test_due_instances_rejects_invalid_date_range_when_to_date_precedes_fr
     assert response["error"]["code"] == "invalid_date_range"
 
 
-async def test_due_instances_rejects_malformed_to_date(
+async def test_due_instances_rejects_invalid_to_date(
     enable_custom_integrations,
     hass,
     hass_ws_client,
@@ -865,7 +865,8 @@ async def test_due_instances_rejects_malformed_to_date(
         {
             "type": "ha_task_manager/due_instances",
             "from_date": "2026-05-10",
-            "to_date": "2026-05-not-a-date",
+            "to_date": "not-a-date",
+            "horizon_days": 30,
         }
     )
     response = await client.receive_json()
@@ -874,7 +875,7 @@ async def test_due_instances_rejects_malformed_to_date(
     assert response["error"]["code"] == "invalid_to_date"
 
 
-async def test_due_instances_to_date_takes_precedence_over_horizon_days(
+async def test_due_instances_prefers_to_date_over_horizon_days(
     enable_custom_integrations,
     hass,
     hass_ws_client,
@@ -894,14 +895,29 @@ async def test_due_instances_to_date_takes_precedence_over_horizon_days(
             "type": "ha_task_manager/due_instances",
             "from_date": "2026-05-10",
             "to_date": "2026-05-12",
-            "horizon_days": 1,
+            "horizon_days": 30,
         }
     )
     response = await client.receive_json()
 
     assert response["success"] is True
-    assert [instance["id"] for instance in response["result"]] == [
-        "task-bathroom:2026-05-10",
-        "task-bathroom:2026-05-11",
-        "task-bathroom:2026-05-12",
+    assert response["result"] == [
+        {
+            "id": "task-bathroom:2026-05-10",
+            "task_id": "task-bathroom",
+            "due_date": "2026-05-10",
+            "skipped": False,
+        },
+        {
+            "id": "task-bathroom:2026-05-11",
+            "task_id": "task-bathroom",
+            "due_date": "2026-05-11",
+            "skipped": False,
+        },
+        {
+            "id": "task-bathroom:2026-05-12",
+            "task_id": "task-bathroom",
+            "due_date": "2026-05-12",
+            "skipped": False,
+        },
     ]
