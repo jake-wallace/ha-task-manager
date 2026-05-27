@@ -4,8 +4,11 @@ from typing import get_type_hints
 import pytest
 
 from custom_components.ha_task_manager.models import (
+    AnalyticsBaselineResetRecord,
+    AnalyticsBaselineState,
     ProfileAnalyticsSnapshot,
     SkipWindow,
+    TaskDeletionRecord,
     TaskDefinition,
     TaskDueInstance,
 )
@@ -56,3 +59,36 @@ def test_task_definition_exposes_date_only_schedule_anchor() -> None:
     hints = get_type_hints(TaskDefinition)
 
     assert hints["start_date"] == date
+
+
+def test_task_deletion_record_defaults_to_active_status() -> None:
+    now = utc_now()
+    record = TaskDeletionRecord(
+        task_snapshot={"id": "task-1", "title": "Task"},
+        actor_ha_user_id="ha-user-1",
+        deleted_at=now,
+        undo_expires_at=now,
+    )
+
+    assert record.status == "active"
+
+
+def test_analytics_baseline_state_defaults_to_none() -> None:
+    state = AnalyticsBaselineState()
+
+    assert state.effective_baseline_at is None
+
+
+def test_analytics_reset_record_captures_previous_baseline() -> None:
+    now = utc_now()
+    record = AnalyticsBaselineResetRecord(
+        previous_baseline_at=None,
+        new_baseline_at=now,
+        actor_ha_user_id="ha-user-1",
+        reset_at=now,
+        undo_expires_at=now,
+    )
+
+    assert record.previous_baseline_at is None
+    assert record.new_baseline_at == now
+    assert record.status == "active"

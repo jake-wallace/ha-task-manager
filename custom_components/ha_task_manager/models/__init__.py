@@ -7,6 +7,12 @@ from .completion import (
     CompletionRecord,
     CompletionSource,
 )
+from .destructive import (
+    AnalyticsBaselineResetRecord,
+    AnalyticsBaselineState,
+    OperationStatus,
+    TaskDeletionRecord,
+)
 from .identity import HaUserSummary, HouseholdProfile, UserProfileMapping
 from .nfc import NfcDiscoveryEntry, NfcTagMapping
 from .task import (
@@ -18,6 +24,8 @@ from .task import (
 )
 
 __all__ = [
+    "AnalyticsBaselineResetRecord",
+    "AnalyticsBaselineState",
     "AttemptOutcome",
     "CompletionAttempt",
     "CompletionRecord",
@@ -26,10 +34,12 @@ __all__ = [
     "HouseholdProfile",
     "NfcDiscoveryEntry",
     "NfcTagMapping",
+    "OperationStatus",
     "ProfileAnalyticsSnapshot",
     "RecurrenceFrequency",
     "RecurrenceRule",
     "SkipWindow",
+    "TaskDeletionRecord",
     "TaskDefinition",
     "TaskDueInstance",
     "UserProfileMapping",
