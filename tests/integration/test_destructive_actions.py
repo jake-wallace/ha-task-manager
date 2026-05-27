@@ -125,9 +125,50 @@ async def test_delete_task_definition_removes_task_and_preserves_history(
     stored_tasks = await store.async_load_tasks()
     assert stored_tasks["tasks"] == []
 
+    controls = await store.async_load_controls()
+    assert controls["task_deletions"] == [
+        {
+            "id": delete_response["result"]["operation_id"],
+            "task_snapshot": _task_payload(),
+            "actor_ha_user_id": hass_admin_user.id,
+            "deleted_at": controls["task_deletions"][0]["deleted_at"],
+            "undo_expires_at": delete_response["result"]["undo_expires_at"],
+            "status": "active",
+        }
+    ]
+
     history = await store.async_load_completions()
     assert len(history) == 1
     assert history[0]["task_id"] == "task-bathroom"
+
+
+async def test_delete_task_definition_rejects_unknown_task_id(
+    enable_custom_integrations,
+    hass,
+    hass_ws_client,
+    hass_admin_user,
+) -> None:
+    store = TaskStore(hass)
+    await store.async_save_tasks({"tasks": [_task_payload()]})
+    await store.async_save_profiles(_mapped_profiles_payload(hass_admin_user.id))
+
+    entry = MockConfigEntry(domain=DOMAIN, title="Task Manager")
+    entry.add_to_hass(hass)
+
+    assert await hass.config_entries.async_setup(entry.entry_id)
+
+    client = await hass_ws_client(hass)
+    await client.send_json_auto_id(
+        {
+            "type": "ha_task_manager/delete_task_definition",
+            "task_id": "task-missing",
+            "confirm_text": "delete",
+        }
+    )
+    response = await client.receive_json()
+
+    assert response["success"] is False
+    assert response["error"]["code"] == "task_not_found"
 
 
 async def test_delete_task_definition_cancels_pending_confirmations_for_task(
@@ -227,6 +268,117 @@ async def test_undo_delete_task_definition_restores_snapshot_within_window(
     stored_tasks = await store.async_load_tasks()
     assert stored_tasks["tasks"] == [_task_payload()]
 
+    controls = await store.async_load_controls()
+    assert controls["task_deletions"] == [
+        {
+            "id": operation_id,
+            "task_snapshot": _task_payload(),
+            "actor_ha_user_id": hass_admin_user.id,
+            "deleted_at": controls["task_deletions"][0]["deleted_at"],
+            "undo_expires_at": controls["task_deletions"][0]["undo_expires_at"],
+            "status": "undone",
+        }
+    ]
+
+
+async def test_undo_delete_task_definition_rejects_unknown_operation(
+    enable_custom_integrations,
+    hass,
+    hass_ws_client,
+    hass_admin_user,
+) -> None:
+    store = TaskStore(hass)
+    await store.async_save_tasks({"tasks": [_task_payload()]})
+    await store.async_save_profiles(_mapped_profiles_payload(hass_admin_user.id))
+
+    entry = MockConfigEntry(domain=DOMAIN, title="Task Manager")
+    entry.add_to_hass(hass)
+
+    assert await hass.config_entries.async_setup(entry.entry_id)
+
+    client = await hass_ws_client(hass)
+    await client.send_json_auto_id(
+        {
+            "type": "ha_task_manager/undo_delete_task_definition",
+            "operation_id": "missing-operation",
+        }
+    )
+    response = await client.receive_json()
+
+    assert response["success"] is False
+    assert response["error"]["code"] == "operation_not_found"
+
+
+async def test_undo_delete_task_definition_rejects_already_undone_operation(
+    enable_custom_integrations,
+    hass,
+    hass_ws_client,
+    hass_admin_user,
+) -> None:
+    store = TaskStore(hass)
+    await store.async_save_tasks({"tasks": [_task_payload()]})
+    await store.async_save_profiles(_mapped_profiles_payload(hass_admin_user.id))
+
+    entry = MockConfigEntry(domain=DOMAIN, title="Task Manager")
+    entry.add_to_hass(hass)
+
+    assert await hass.config_entries.async_setup(entry.entry_id)
+
+    client = await hass_ws_client(hass)
+    await client.send_json_auto_id(
+        {
+            "type": "ha_task_manager/delete_task_definition",
+            "task_id": "task-bathroom",
+            "confirm_text": "delete",
+        }
+    )
+    delete_response = await client.receive_json()
+    operation_id = delete_response["result"]["operation_id"]
+
+    await client.send_json_auto_id(
+        {
+            "type": "ha_task_manager/undo_delete_task_definition",
+            "operation_id": operation_id,
+        }
+    )
+    first_undo_response = await client.receive_json()
+    assert first_undo_response["success"] is True
+
+    controls_after_first_undo = await store.async_load_controls()
+    assert controls_after_first_undo["task_deletions"] == [
+        {
+            "id": operation_id,
+            "task_snapshot": _task_payload(),
+            "actor_ha_user_id": hass_admin_user.id,
+            "deleted_at": controls_after_first_undo["task_deletions"][0]["deleted_at"],
+            "undo_expires_at": controls_after_first_undo["task_deletions"][0]["undo_expires_at"],
+            "status": "undone",
+        }
+    ]
+
+    await client.send_json_auto_id(
+        {
+            "type": "ha_task_manager/undo_delete_task_definition",
+            "operation_id": operation_id,
+        }
+    )
+    second_undo_response = await client.receive_json()
+
+    assert second_undo_response["success"] is False
+    assert second_undo_response["error"]["code"] == "operation_not_reversible"
+
+    controls_after_second_undo = await store.async_load_controls()
+    assert controls_after_second_undo["task_deletions"] == [
+        {
+            "id": operation_id,
+            "task_snapshot": _task_payload(),
+            "actor_ha_user_id": hass_admin_user.id,
+            "deleted_at": controls_after_second_undo["task_deletions"][0]["deleted_at"],
+            "undo_expires_at": controls_after_second_undo["task_deletions"][0]["undo_expires_at"],
+            "status": "undone",
+        }
+    ]
+
 
 async def test_undo_delete_task_definition_rejects_expired_operation(
     enable_custom_integrations,
@@ -274,6 +426,230 @@ async def test_undo_delete_task_definition_rejects_expired_operation(
 
     assert response["success"] is False
     assert response["error"]["code"] == "undo_window_expired"
+
+    updated_controls = await store.async_load_controls()
+    assert updated_controls["task_deletions"] == [
+        {
+            "id": operation_id,
+            "task_snapshot": _task_payload(),
+            "actor_ha_user_id": hass_admin_user.id,
+            "deleted_at": updated_controls["task_deletions"][0]["deleted_at"],
+            "undo_expires_at": controls["task_deletions"][0]["undo_expires_at"],
+            "status": "expired",
+        }
+    ]
+
+
+async def test_delete_task_definition_rolls_back_when_controls_write_fails(
+    enable_custom_integrations,
+    hass,
+    hass_ws_client,
+    hass_admin_user,
+) -> None:
+    store = TaskStore(hass)
+    await store.async_save_tasks({"tasks": [_task_payload(nfc_tag_id="tag-phone-1")]})
+    await store.async_save_profiles(_mapped_profiles_payload(hass_admin_user.id))
+    await store.async_save_nfc(
+        {
+            "tag_mappings": [
+                {
+                    "id": "mapping-1",
+                    "tag_id": "tag-phone-1",
+                    "task_id": "task-bathroom",
+                    "label": "Bathroom",
+                    "created_at": "2026-05-10T00:00:00+00:00",
+                }
+            ],
+            "discovery_entries": [],
+        }
+    )
+
+    entry = MockConfigEntry(domain=DOMAIN, title="Task Manager")
+    entry.add_to_hass(hass)
+
+    assert await hass.config_entries.async_setup(entry.entry_id)
+
+    runtime_store = hass.data[DOMAIN][entry.entry_id]["store"]
+    original_save_controls = runtime_store.async_save_controls
+    failure_emitted = False
+
+    async def fail_once_save_controls(data):
+        nonlocal failure_emitted
+        if not failure_emitted:
+            failure_emitted = True
+            raise RuntimeError("simulated controls write failure")
+        await original_save_controls(data)
+
+    runtime_store.async_save_controls = fail_once_save_controls
+
+    client = await hass_ws_client(hass)
+    await client.send_json_auto_id(
+        {
+            "type": "ha_task_manager/delete_task_definition",
+            "task_id": "task-bathroom",
+            "confirm_text": "delete",
+        }
+    )
+    response = await client.receive_json()
+
+    assert response["success"] is False
+    assert response["error"]["code"] == "delete_task_failed"
+
+    stored_tasks = await store.async_load_tasks()
+    assert stored_tasks["tasks"] == [_task_payload(nfc_tag_id="tag-phone-1")]
+
+    controls = await store.async_load_controls()
+    assert controls["task_deletions"] == []
+
+    nfc_payload = await store.async_load_nfc()
+    assert nfc_payload["tag_mappings"] == [
+        {
+            "id": "mapping-1",
+            "tag_id": "tag-phone-1",
+            "task_id": "task-bathroom",
+            "label": "Bathroom",
+            "created_at": "2026-05-10T00:00:00+00:00",
+        }
+    ]
+
+
+async def test_undo_delete_task_definition_rolls_back_when_controls_write_fails(
+    enable_custom_integrations,
+    hass,
+    hass_ws_client,
+    hass_admin_user,
+) -> None:
+    store = TaskStore(hass)
+    await store.async_save_tasks({"tasks": [_task_payload(nfc_tag_id="tag-phone-1")]})
+    await store.async_save_profiles(_mapped_profiles_payload(hass_admin_user.id))
+
+    entry = MockConfigEntry(domain=DOMAIN, title="Task Manager")
+    entry.add_to_hass(hass)
+
+    assert await hass.config_entries.async_setup(entry.entry_id)
+
+    client = await hass_ws_client(hass)
+    await client.send_json_auto_id(
+        {
+            "type": "ha_task_manager/delete_task_definition",
+            "task_id": "task-bathroom",
+            "confirm_text": "delete",
+        }
+    )
+    delete_response = await client.receive_json()
+    assert delete_response["success"] is True
+    operation_id = delete_response["result"]["operation_id"]
+
+    runtime_store = hass.data[DOMAIN][entry.entry_id]["store"]
+    original_save_controls = runtime_store.async_save_controls
+    failure_emitted = False
+
+    async def fail_once_save_controls(data):
+        nonlocal failure_emitted
+        if not failure_emitted:
+            failure_emitted = True
+            raise RuntimeError("simulated controls write failure")
+        await original_save_controls(data)
+
+    runtime_store.async_save_controls = fail_once_save_controls
+
+    await client.send_json_auto_id(
+        {
+            "type": "ha_task_manager/undo_delete_task_definition",
+            "operation_id": operation_id,
+        }
+    )
+    response = await client.receive_json()
+
+    assert response["success"] is False
+    assert response["error"]["code"] == "undo_delete_task_failed"
+
+    stored_tasks = await store.async_load_tasks()
+    assert stored_tasks["tasks"] == []
+
+    controls = await store.async_load_controls()
+    assert controls["task_deletions"] == [
+        {
+            "id": operation_id,
+            "task_snapshot": _task_payload(nfc_tag_id="tag-phone-1"),
+            "actor_ha_user_id": hass_admin_user.id,
+            "deleted_at": controls["task_deletions"][0]["deleted_at"],
+            "undo_expires_at": controls["task_deletions"][0]["undo_expires_at"],
+            "status": "active",
+        }
+    ]
+
+
+async def test_undo_delete_task_definition_rejects_nfc_conflict_on_restore(
+    enable_custom_integrations,
+    hass,
+    hass_ws_client,
+    hass_admin_user,
+) -> None:
+    store = TaskStore(hass)
+    await store.async_save_tasks({"tasks": [_task_payload(nfc_tag_id="tag-phone-1")]})
+    await store.async_save_profiles(_mapped_profiles_payload(hass_admin_user.id))
+
+    entry = MockConfigEntry(domain=DOMAIN, title="Task Manager")
+    entry.add_to_hass(hass)
+
+    assert await hass.config_entries.async_setup(entry.entry_id)
+
+    client = await hass_ws_client(hass)
+    await client.send_json_auto_id(
+        {
+            "type": "ha_task_manager/delete_task_definition",
+            "task_id": "task-bathroom",
+            "confirm_text": "delete",
+        }
+    )
+    delete_response = await client.receive_json()
+    assert delete_response["success"] is True
+    operation_id = delete_response["result"]["operation_id"]
+
+    await store.async_save_tasks(
+        {
+            "tasks": [
+                {
+                    **_task_payload(nfc_tag_id="tag-phone-1"),
+                    "id": "task-kitchen",
+                    "title": "Clean kitchen",
+                }
+            ]
+        }
+    )
+
+    await client.send_json_auto_id(
+        {
+            "type": "ha_task_manager/undo_delete_task_definition",
+            "operation_id": operation_id,
+        }
+    )
+    response = await client.receive_json()
+
+    assert response["success"] is False
+    assert response["error"]["code"] == "invalid_task"
+
+    stored_tasks = await store.async_load_tasks()
+    assert stored_tasks["tasks"] == [
+        {
+            **_task_payload(nfc_tag_id="tag-phone-1"),
+            "id": "task-kitchen",
+            "title": "Clean kitchen",
+        }
+    ]
+
+    controls = await store.async_load_controls()
+    assert controls["task_deletions"] == [
+        {
+            "id": operation_id,
+            "task_snapshot": _task_payload(nfc_tag_id="tag-phone-1"),
+            "actor_ha_user_id": hass_admin_user.id,
+            "deleted_at": controls["task_deletions"][0]["deleted_at"],
+            "undo_expires_at": controls["task_deletions"][0]["undo_expires_at"],
+            "status": "active",
+        }
+    ]
 
 
 async def test_delete_task_definition_requires_mapped_user(

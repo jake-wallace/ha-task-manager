@@ -551,6 +551,30 @@ async def _sync_task_nfc_mappings(
     return updated_mappings
 
 
+async def _rollback_task_mutation_snapshot(
+    store: TaskStore,
+    *,
+    tasks_payload: dict[str, Any],
+    nfc_payload: dict[str, Any],
+    controls_payload: dict[str, Any],
+) -> None:
+    """Best-effort rollback for multi-store task mutations."""
+    try:
+        await store.async_save_tasks(tasks_payload)
+    except Exception:
+        pass
+
+    try:
+        await store.async_save_nfc(nfc_payload)
+    except Exception:
+        pass
+
+    try:
+        await store.async_save_controls(controls_payload)
+    except Exception:
+        pass
+
+
 def async_register_websocket_api(hass: HomeAssistant) -> None:
     """Register the WebSocket commands consumed by the panel UI."""
 
@@ -1090,6 +1114,13 @@ def async_register_websocket_api(hass: HomeAssistant) -> None:
                 return
 
             controls = await store.async_load_controls()
+            nfc_snapshot = await store.async_load_nfc()
+            tasks_snapshot = {
+                "tasks": [
+                    task_definition_to_dict(existing)
+                    for existing in tasks
+                ]
+            }
             now = utc_now()
             deletion_record = TaskDeletionRecord(
                 task_snapshot=task_definition_to_dict(task),
@@ -1099,41 +1130,54 @@ def async_register_websocket_api(hass: HomeAssistant) -> None:
             )
 
             stored_tasks = [existing for existing in tasks if existing.id != task.id]
-            _dismiss_pending_confirmations_for_task(runtime_data, task.id)
+            updated_tasks_payload = {
+                "tasks": [
+                    task_definition_to_dict(existing)
+                    for existing in stored_tasks
+                ]
+            }
+            updated_tag_mappings = _derive_task_tag_mappings(stored_tasks)
+            updated_discovery_entries = [
+                nfc_discovery_entry_to_dict(entry)
+                for entry in runtime_data["nfc"].get_discoveries()
+            ]
+            updated_controls_payload = {
+                "task_deletions": [
+                    *controls["task_deletions"],
+                    task_deletion_record_to_dict(deletion_record),
+                ]
+            }
 
-            await store.async_save_tasks(
-                {
-                    "tasks": [
-                        task_definition_to_dict(existing)
-                        for existing in stored_tasks
-                    ]
-                }
-            )
-
-            updated_tag_mappings = await _sync_task_nfc_mappings(store, stored_tasks)
-            _rebuild_nfc_service(
-                runtime_data,
-                tasks=stored_tasks,
-                tag_mappings=updated_tag_mappings,
-            )
-
-            await store.async_save_nfc(
-                {
-                    "discovery_entries": [
-                        nfc_discovery_entry_to_dict(entry)
-                        for entry in runtime_data["nfc"].get_discoveries()
-                    ]
-                }
-            )
-
-            await store.async_save_controls(
-                {
-                    "task_deletions": [
-                        *controls["task_deletions"],
-                        task_deletion_record_to_dict(deletion_record),
-                    ]
-                }
-            )
+            try:
+                await store.async_save_tasks(updated_tasks_payload)
+                await store.async_save_nfc(
+                    {
+                        "tag_mappings": [
+                            nfc_tag_mapping_to_dict(mapping)
+                            for mapping in updated_tag_mappings
+                        ],
+                        "discovery_entries": updated_discovery_entries,
+                    }
+                )
+                await store.async_save_controls(updated_controls_payload)
+                _rebuild_nfc_service(
+                    runtime_data,
+                    tasks=stored_tasks,
+                    tag_mappings=updated_tag_mappings,
+                )
+            except Exception:
+                await _rollback_task_mutation_snapshot(
+                    store,
+                    tasks_payload=tasks_snapshot,
+                    nfc_payload=nfc_snapshot,
+                    controls_payload=controls,
+                )
+                connection.send_error(
+                    msg["id"],
+                    "delete_task_failed",
+                    "Failed to delete task definition.",
+                )
+                return
 
         connection.send_result(
             msg["id"],
@@ -1207,11 +1251,19 @@ def async_register_websocket_api(hass: HomeAssistant) -> None:
                         record.status = OperationStatus.EXPIRED
                     updated_records.append(task_deletion_record_to_dict(record))
 
-                await store.async_save_controls(
-                    {
-                        "task_deletions": updated_records,
-                    }
-                )
+                try:
+                    await store.async_save_controls(
+                        {
+                            "task_deletions": updated_records,
+                        }
+                    )
+                except Exception:
+                    connection.send_error(
+                        msg["id"],
+                        "undo_delete_task_failed",
+                        "Failed to undo task deletion.",
+                    )
+                    return
                 connection.send_error(
                     msg["id"],
                     "undo_window_expired",
@@ -1221,33 +1273,33 @@ def async_register_websocket_api(hass: HomeAssistant) -> None:
 
             tasks = await _load_tasks(store)
             restored_task = task_definition_from_dict(deletion_record.task_snapshot)
+            try:
+                _validate_unique_nfc_tag(restored_task, tasks)
+            except ValueError as err:
+                connection.send_error(msg["id"], "invalid_task", str(err))
+                return
+
+            controls_snapshot = controls
+            tasks_snapshot = {
+                "tasks": [
+                    task_definition_to_dict(existing)
+                    for existing in tasks
+                ]
+            }
+            nfc_snapshot = await store.async_load_nfc()
             stored_tasks = [existing for existing in tasks if existing.id != restored_task.id]
             stored_tasks.append(restored_task)
-
-            await store.async_save_tasks(
-                {
-                    "tasks": [
-                        task_definition_to_dict(existing)
-                        for existing in stored_tasks
-                    ]
-                }
-            )
-
-            updated_tag_mappings = await _sync_task_nfc_mappings(store, stored_tasks)
-            _rebuild_nfc_service(
-                runtime_data,
-                tasks=stored_tasks,
-                tag_mappings=updated_tag_mappings,
-            )
-
-            await store.async_save_nfc(
-                {
-                    "discovery_entries": [
-                        nfc_discovery_entry_to_dict(entry)
-                        for entry in runtime_data["nfc"].get_discoveries()
-                    ]
-                }
-            )
+            updated_tasks_payload = {
+                "tasks": [
+                    task_definition_to_dict(existing)
+                    for existing in stored_tasks
+                ]
+            }
+            updated_tag_mappings = _derive_task_tag_mappings(stored_tasks)
+            updated_discovery_entries = [
+                nfc_discovery_entry_to_dict(entry)
+                for entry in runtime_data["nfc"].get_discoveries()
+            ]
 
             updated_records = []
             for record in deletion_records:
@@ -1255,11 +1307,40 @@ def async_register_websocket_api(hass: HomeAssistant) -> None:
                     record.status = OperationStatus.UNDONE
                 updated_records.append(task_deletion_record_to_dict(record))
 
-            await store.async_save_controls(
-                {
-                    "task_deletions": updated_records,
-                }
-            )
+            try:
+                await store.async_save_tasks(updated_tasks_payload)
+                await store.async_save_nfc(
+                    {
+                        "tag_mappings": [
+                            nfc_tag_mapping_to_dict(mapping)
+                            for mapping in updated_tag_mappings
+                        ],
+                        "discovery_entries": updated_discovery_entries,
+                    }
+                )
+                await store.async_save_controls(
+                    {
+                        "task_deletions": updated_records,
+                    }
+                )
+                _rebuild_nfc_service(
+                    runtime_data,
+                    tasks=stored_tasks,
+                    tag_mappings=updated_tag_mappings,
+                )
+            except Exception:
+                await _rollback_task_mutation_snapshot(
+                    store,
+                    tasks_payload=tasks_snapshot,
+                    nfc_payload=nfc_snapshot,
+                    controls_payload=controls_snapshot,
+                )
+                connection.send_error(
+                    msg["id"],
+                    "undo_delete_task_failed",
+                    "Failed to undo task deletion.",
+                )
+                return
 
         connection.send_result(
             msg["id"],
