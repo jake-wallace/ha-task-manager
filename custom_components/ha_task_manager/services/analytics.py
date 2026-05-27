@@ -83,6 +83,10 @@ class AnalyticsService:
             1
             for instance in due_instances
             if not instance.skipped
+            and (
+                effective_baseline_at is None
+                or instance.due_date >= effective_baseline_at.date()
+            )
             and instance.due_date < as_of
             and instance.id not in completed_due_instance_ids
         )

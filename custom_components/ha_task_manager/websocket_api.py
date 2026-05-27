@@ -1492,7 +1492,7 @@ def async_register_websocket_api(hass: HomeAssistant) -> None:
             except Exception:
                 connection.send_error(
                     msg["id"],
-                    "reset_analytics_baseline_failed",
+                    "reset_analytics_failed",
                     "Failed to reset analytics baseline.",
                 )
                 return
@@ -1580,7 +1580,7 @@ def async_register_websocket_api(hass: HomeAssistant) -> None:
                 except Exception:
                     connection.send_error(
                         msg["id"],
-                        "undo_analytics_baseline_reset_failed",
+                        "undo_reset_analytics_failed",
                         "Failed to undo analytics baseline reset.",
                     )
                     return
@@ -1616,7 +1616,7 @@ def async_register_websocket_api(hass: HomeAssistant) -> None:
             except Exception:
                 connection.send_error(
                     msg["id"],
-                    "undo_analytics_baseline_reset_failed",
+                    "undo_reset_analytics_failed",
                     "Failed to undo analytics baseline reset.",
                 )
                 return

@@ -768,3 +768,279 @@ async def test_reset_analytics_baseline_requires_mapped_user(
 
     assert response["success"] is False
     assert response["error"]["code"] == "mapping_required"
+
+
+async def test_reset_analytics_baseline_requires_exact_confirm_text(
+    enable_custom_integrations,
+    hass,
+    hass_ws_client,
+    hass_admin_user,
+) -> None:
+    store = TaskStore(hass)
+    await store.async_save_profiles(_mapped_profiles_payload(hass_admin_user.id))
+
+    entry = MockConfigEntry(domain=DOMAIN, title="Task Manager")
+    entry.add_to_hass(hass)
+
+    assert await hass.config_entries.async_setup(entry.entry_id)
+
+    client = await hass_ws_client(hass)
+    await client.send_json_auto_id(
+        {
+            "type": "ha_task_manager/reset_analytics_baseline",
+            "confirm_text": "DELETE",
+        }
+    )
+    response = await client.receive_json()
+
+    assert response["success"] is False
+    assert response["error"]["code"] == "invalid_confirm_text"
+
+
+async def test_undo_analytics_baseline_reset_rejects_unknown_operation(
+    enable_custom_integrations,
+    hass,
+    hass_ws_client,
+    hass_admin_user,
+) -> None:
+    store = TaskStore(hass)
+    await store.async_save_profiles(_mapped_profiles_payload(hass_admin_user.id))
+
+    entry = MockConfigEntry(domain=DOMAIN, title="Task Manager")
+    entry.add_to_hass(hass)
+
+    assert await hass.config_entries.async_setup(entry.entry_id)
+
+    client = await hass_ws_client(hass)
+    await client.send_json_auto_id(
+        {
+            "type": "ha_task_manager/undo_analytics_baseline_reset",
+            "operation_id": "missing-operation",
+        }
+    )
+    response = await client.receive_json()
+
+    assert response["success"] is False
+    assert response["error"]["code"] == "operation_not_found"
+
+
+async def test_undo_analytics_baseline_reset_rejects_already_undone_operation(
+    enable_custom_integrations,
+    hass,
+    hass_ws_client,
+    hass_admin_user,
+) -> None:
+    store = TaskStore(hass)
+    await store.async_save_profiles(_mapped_profiles_payload(hass_admin_user.id))
+
+    entry = MockConfigEntry(domain=DOMAIN, title="Task Manager")
+    entry.add_to_hass(hass)
+
+    assert await hass.config_entries.async_setup(entry.entry_id)
+
+    client = await hass_ws_client(hass)
+    await client.send_json_auto_id(
+        {
+            "type": "ha_task_manager/reset_analytics_baseline",
+            "confirm_text": "delete",
+        }
+    )
+    reset_response = await client.receive_json()
+    operation_id = reset_response["result"]["operation_id"]
+
+    await client.send_json_auto_id(
+        {
+            "type": "ha_task_manager/undo_analytics_baseline_reset",
+            "operation_id": operation_id,
+        }
+    )
+    first_undo_response = await client.receive_json()
+    assert first_undo_response["success"] is True
+
+    await client.send_json_auto_id(
+        {
+            "type": "ha_task_manager/undo_analytics_baseline_reset",
+            "operation_id": operation_id,
+        }
+    )
+    second_undo_response = await client.receive_json()
+
+    assert second_undo_response["success"] is False
+    assert second_undo_response["error"]["code"] == "operation_not_reversible"
+
+
+async def test_undo_analytics_baseline_reset_rejects_expired_operation(
+    enable_custom_integrations,
+    hass,
+    hass_ws_client,
+    hass_admin_user,
+) -> None:
+    store = TaskStore(hass)
+    await store.async_save_profiles(_mapped_profiles_payload(hass_admin_user.id))
+
+    entry = MockConfigEntry(domain=DOMAIN, title="Task Manager")
+    entry.add_to_hass(hass)
+
+    assert await hass.config_entries.async_setup(entry.entry_id)
+
+    client = await hass_ws_client(hass)
+    await client.send_json_auto_id(
+        {
+            "type": "ha_task_manager/reset_analytics_baseline",
+            "confirm_text": "delete",
+        }
+    )
+    reset_response = await client.receive_json()
+    operation_id = reset_response["result"]["operation_id"]
+
+    controls = await store.async_load_controls()
+    for record in controls["analytics_baseline_resets"]:
+        if record.get("id") == operation_id:
+            record["undo_expires_at"] = (
+                datetime.now(UTC) - timedelta(minutes=1)
+            ).isoformat()
+    await store.async_save_controls(
+        {
+            "analytics_baseline_resets": controls["analytics_baseline_resets"],
+        }
+    )
+
+    await client.send_json_auto_id(
+        {
+            "type": "ha_task_manager/undo_analytics_baseline_reset",
+            "operation_id": operation_id,
+        }
+    )
+    response = await client.receive_json()
+
+    assert response["success"] is False
+    assert response["error"]["code"] == "undo_window_expired"
+
+    updated_controls = await store.async_load_controls()
+    assert updated_controls["analytics_baseline_resets"] == [
+        {
+            "id": operation_id,
+            "previous_baseline_at": None,
+            "new_baseline_at": updated_controls["analytics_baseline_resets"][0][
+                "new_baseline_at"
+            ],
+            "actor_ha_user_id": hass_admin_user.id,
+            "reset_at": updated_controls["analytics_baseline_resets"][0]["reset_at"],
+            "undo_expires_at": controls["analytics_baseline_resets"][0][
+                "undo_expires_at"
+            ],
+            "status": "expired",
+        }
+    ]
+
+
+async def test_reset_analytics_baseline_returns_reset_analytics_failed_on_storage_error(
+    enable_custom_integrations,
+    hass,
+    hass_ws_client,
+    hass_admin_user,
+) -> None:
+    store = TaskStore(hass)
+    await store.async_save_profiles(_mapped_profiles_payload(hass_admin_user.id))
+
+    entry = MockConfigEntry(domain=DOMAIN, title="Task Manager")
+    entry.add_to_hass(hass)
+
+    assert await hass.config_entries.async_setup(entry.entry_id)
+
+    runtime_store = hass.data[DOMAIN][entry.entry_id]["store"]
+    original_save_controls = runtime_store.async_save_controls
+    failure_emitted = False
+
+    async def fail_once_save_controls(data):
+        nonlocal failure_emitted
+        if not failure_emitted:
+            failure_emitted = True
+            raise RuntimeError("simulated controls write failure")
+        await original_save_controls(data)
+
+    runtime_store.async_save_controls = fail_once_save_controls
+
+    client = await hass_ws_client(hass)
+    await client.send_json_auto_id(
+        {
+            "type": "ha_task_manager/reset_analytics_baseline",
+            "confirm_text": "delete",
+        }
+    )
+    response = await client.receive_json()
+
+    assert response["success"] is False
+    assert response["error"]["code"] == "reset_analytics_failed"
+
+    controls = await store.async_load_controls()
+    assert controls["analytics_baseline_state"] == {"effective_baseline_at": None}
+    assert controls["analytics_baseline_resets"] == []
+
+
+async def test_undo_analytics_baseline_reset_returns_undo_reset_analytics_failed_on_storage_error(
+    enable_custom_integrations,
+    hass,
+    hass_ws_client,
+    hass_admin_user,
+) -> None:
+    store = TaskStore(hass)
+    await store.async_save_profiles(_mapped_profiles_payload(hass_admin_user.id))
+
+    entry = MockConfigEntry(domain=DOMAIN, title="Task Manager")
+    entry.add_to_hass(hass)
+
+    assert await hass.config_entries.async_setup(entry.entry_id)
+
+    client = await hass_ws_client(hass)
+    await client.send_json_auto_id(
+        {
+            "type": "ha_task_manager/reset_analytics_baseline",
+            "confirm_text": "delete",
+        }
+    )
+    reset_response = await client.receive_json()
+    assert reset_response["success"] is True
+    operation_id = reset_response["result"]["operation_id"]
+
+    runtime_store = hass.data[DOMAIN][entry.entry_id]["store"]
+    original_save_controls = runtime_store.async_save_controls
+    failure_emitted = False
+
+    async def fail_once_save_controls(data):
+        nonlocal failure_emitted
+        if not failure_emitted:
+            failure_emitted = True
+            raise RuntimeError("simulated controls write failure")
+        await original_save_controls(data)
+
+    runtime_store.async_save_controls = fail_once_save_controls
+
+    await client.send_json_auto_id(
+        {
+            "type": "ha_task_manager/undo_analytics_baseline_reset",
+            "operation_id": operation_id,
+        }
+    )
+    response = await client.receive_json()
+
+    assert response["success"] is False
+    assert response["error"]["code"] == "undo_reset_analytics_failed"
+
+    controls = await store.async_load_controls()
+    assert controls["analytics_baseline_state"]["effective_baseline_at"] is not None
+    assert controls["analytics_baseline_resets"] == [
+        {
+            "id": operation_id,
+            "previous_baseline_at": None,
+            "new_baseline_at": controls["analytics_baseline_resets"][0][
+                "new_baseline_at"
+            ],
+            "actor_ha_user_id": hass_admin_user.id,
+            "reset_at": controls["analytics_baseline_resets"][0]["reset_at"],
+            "undo_expires_at": controls["analytics_baseline_resets"][0][
+                "undo_expires_at"
+            ],
+            "status": "active",
+        }
+    ]
