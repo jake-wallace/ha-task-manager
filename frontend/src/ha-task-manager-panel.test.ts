@@ -151,7 +151,7 @@ describe("ha-task-manager-panel", () => {
       | null;
     const manageTasksButton = Array.from(panel.shadowRoot?.querySelectorAll("nav button") ?? []).find(
       (button) => button.textContent?.trim() === "Manage Tasks"
-    );
+    ) as HTMLButtonElement | undefined;
     const setupButton = Array.from(panel.shadowRoot?.querySelectorAll("nav button") ?? []).find(
       (button) => button.textContent?.trim() === "Setup"
     );
