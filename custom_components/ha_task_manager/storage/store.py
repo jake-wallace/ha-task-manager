@@ -82,13 +82,29 @@ class TaskStore:
     def _normalize_controls_payload(data: dict[str, Any] | None) -> dict[str, Any]:
         """Ensure destructive control payloads include all expected collections."""
         data = data or {}
+        task_deletions = data.get("task_deletions", [])
+        if not isinstance(task_deletions, list):
+            task_deletions = []
+
+        analytics_baseline_resets = data.get("analytics_baseline_resets", [])
+        if not isinstance(analytics_baseline_resets, list):
+            analytics_baseline_resets = []
+
+        analytics_baseline_state = data.get("analytics_baseline_state")
+        if not isinstance(analytics_baseline_state, dict):
+            analytics_baseline_state = {"effective_baseline_at": None}
+        else:
+            analytics_baseline_state = {
+                **analytics_baseline_state,
+                "effective_baseline_at": analytics_baseline_state.get(
+                    "effective_baseline_at"
+                ),
+            }
+
         return {
-            "task_deletions": data.get("task_deletions", []),
-            "analytics_baseline_resets": data.get("analytics_baseline_resets", []),
-            "analytics_baseline_state": data.get(
-                "analytics_baseline_state",
-                {"effective_baseline_at": None},
-            ),
+            "task_deletions": task_deletions,
+            "analytics_baseline_resets": analytics_baseline_resets,
+            "analytics_baseline_state": analytics_baseline_state,
         }
 
     async def async_load_tasks(self) -> dict[str, Any]:

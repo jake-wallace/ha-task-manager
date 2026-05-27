@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from copy import deepcopy
 import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -44,6 +45,19 @@ class _FakeNfcStore:
             key: [dict(item) for item in value]
             for key, value in data.items()
         }
+
+
+class _FakeControlsStore:
+    def __init__(self, initial_data: dict[str, object] | None = None) -> None:
+        self.data = deepcopy(initial_data)
+
+    async def async_load(self) -> dict[str, object] | None:
+        await asyncio.sleep(0)
+        return deepcopy(self.data)
+
+    async def async_save(self, data: dict[str, object]) -> None:
+        await asyncio.sleep(0)
+        self.data = deepcopy(data)
 
 
 async def test_append_completion_serializes_concurrent_writes(hass) -> None:
@@ -203,3 +217,92 @@ async def test_nfc_storage_loads_existing_version_1_payload() -> None:
                 "discovery_entries": [],
             },
         }
+
+
+async def test_controls_storage_load_defaults_when_empty(hass) -> None:
+    store = TaskStore(hass)
+    fake_store = _FakeControlsStore(initial_data=None)
+    store._controls_store = fake_store
+
+    assert await store.async_load_controls() == {
+        "task_deletions": [],
+        "analytics_baseline_resets": [],
+        "analytics_baseline_state": {"effective_baseline_at": None},
+    }
+
+
+async def test_controls_storage_partial_save_preserves_existing_fields(hass) -> None:
+    store = TaskStore(hass)
+    fake_store = _FakeControlsStore(
+        initial_data={
+            "task_deletions": [{"task_id": "task-older"}],
+            "analytics_baseline_resets": [{"reset_at": "2026-05-14T09:00:00+00:00"}],
+            "analytics_baseline_state": {
+                "effective_baseline_at": "2026-05-01T00:00:00+00:00"
+            },
+        }
+    )
+    store._controls_store = fake_store
+
+    await store.async_save_controls(
+        {
+            "task_deletions": [{"task_id": "task-new"}],
+        }
+    )
+
+    assert fake_store.data == {
+        "task_deletions": [{"task_id": "task-new"}],
+        "analytics_baseline_resets": [{"reset_at": "2026-05-14T09:00:00+00:00"}],
+        "analytics_baseline_state": {
+            "effective_baseline_at": "2026-05-01T00:00:00+00:00"
+        },
+    }
+
+
+async def test_controls_storage_serializes_overlapping_partial_updates(hass) -> None:
+    store = TaskStore(hass)
+    fake_store = _FakeControlsStore(
+        initial_data={
+            "task_deletions": [],
+            "analytics_baseline_resets": [],
+            "analytics_baseline_state": {"effective_baseline_at": None},
+        }
+    )
+    store._controls_store = fake_store
+
+    await asyncio.gather(
+        store.async_save_controls(
+            {
+                "task_deletions": [{"task_id": "task-a"}],
+            }
+        ),
+        store.async_save_controls(
+            {
+                "analytics_baseline_resets": [{"reset_at": "2026-05-15T09:00:00+00:00"}],
+            }
+        ),
+    )
+
+    assert fake_store.data == {
+        "task_deletions": [{"task_id": "task-a"}],
+        "analytics_baseline_resets": [{"reset_at": "2026-05-15T09:00:00+00:00"}],
+        "analytics_baseline_state": {"effective_baseline_at": None},
+    }
+
+
+async def test_controls_storage_load_coerces_malformed_values(hass) -> None:
+    store = TaskStore(hass)
+    fake_store = _FakeControlsStore(
+        initial_data={
+            "task_deletions": {"not": "a-list"},
+            "analytics_baseline_resets": "not-a-list",
+            "analytics_baseline_state": ["not-a-dict"],
+        }
+    )
+    store._controls_store = fake_store
+
+    assert await store.async_load_controls() == {
+        "task_deletions": [],
+        "analytics_baseline_resets": [],
+        "analytics_baseline_state": {"effective_baseline_at": None},
+    }
