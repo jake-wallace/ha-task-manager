@@ -21,10 +21,12 @@ from .models import (
     HouseholdProfile,
     NfcDiscoveryEntry,
     NfcTagMapping,
+    OperationStatus,
     ProfileAnalyticsSnapshot,
     RecurrenceFrequency,
     RecurrenceRule,
     SkipWindow,
+    TaskDeletionRecord,
     TaskDefinition,
     TaskDueInstance,
     UserProfileMapping,
@@ -32,6 +34,10 @@ from .models import (
 from .models.time import utc_now
 from .services.nfc_events import NfcEventService
 from .storage.store import TaskStore
+
+
+DELETE_CONFIRM_TEXT = "delete"
+TASK_DELETE_UNDO_WINDOW = timedelta(minutes=5)
 
 
 def _parse_date(value: str) -> date:
@@ -273,6 +279,36 @@ def analytics_snapshot_to_dict(
     }
 
 
+def task_deletion_record_to_dict(record: TaskDeletionRecord) -> dict[str, Any]:
+    """Serialize a task deletion control record."""
+    return {
+        "id": record.id,
+        "task_snapshot": record.task_snapshot,
+        "actor_ha_user_id": record.actor_ha_user_id,
+        "deleted_at": record.deleted_at.isoformat(),
+        "undo_expires_at": record.undo_expires_at.isoformat(),
+        "status": record.status.value,
+    }
+
+
+def task_deletion_record_from_dict(raw_record: dict[str, Any]) -> TaskDeletionRecord:
+    """Deserialize a task deletion control record payload."""
+    raw_status = raw_record.get("status", OperationStatus.ACTIVE.value)
+    try:
+        status = OperationStatus(raw_status)
+    except ValueError:
+        status = OperationStatus.ACTIVE
+
+    return TaskDeletionRecord(
+        id=raw_record["id"],
+        task_snapshot=raw_record["task_snapshot"],
+        actor_ha_user_id=raw_record.get("actor_ha_user_id", ""),
+        deleted_at=_parse_datetime(raw_record["deleted_at"]),
+        undo_expires_at=_parse_datetime(raw_record["undo_expires_at"]),
+        status=status,
+    )
+
+
 def _resolve_due_instance(
     task_domain,
     *,
@@ -345,6 +381,21 @@ def _pending_confirmations_for_user(
         for attempt in runtime_data["nfc"].get_pending_confirmations()
         if attempt.actor_ha_user_id == ha_user_id
     ]
+
+
+def _is_mapped_user(runtime_data: dict[str, Any], ha_user_id: str) -> bool:
+    identity_service = runtime_data["identity"]
+    return identity_service.is_mapped(ha_user_id)
+
+
+def _dismiss_pending_confirmations_for_task(
+    runtime_data: dict[str, Any],
+    task_id: str,
+) -> None:
+    pending_attempts = runtime_data["nfc"].get_pending_confirmations()
+    for attempt in pending_attempts:
+        if attempt.task_id == task_id:
+            runtime_data["nfc"].dismiss_confirmation(attempt.id)
 
 
 async def _load_tasks(store: TaskStore) -> list[TaskDefinition]:
@@ -990,6 +1041,236 @@ def async_register_websocket_api(hass: HomeAssistant) -> None:
         connection.send_result(msg["id"], task_definition_to_dict(task))
 
     @websocket_api.websocket_command(
+        {
+            vol.Required("type"): f"{DOMAIN}/delete_task_definition",
+            vol.Required("task_id"): cv.string,
+            vol.Required("confirm_text"): cv.string,
+        }
+    )
+    @websocket_api.async_response
+    async def ws_delete_task_definition(
+        hass: HomeAssistant,
+        connection: websocket_api.ActiveConnection,
+        msg: dict[str, Any],
+    ) -> None:
+        runtime_data = _get_runtime_data(connection, msg)
+        if runtime_data is None:
+            return
+
+        if not _is_mapped_user(runtime_data, connection.user.id):
+            connection.send_error(
+                msg["id"],
+                "mapping_required",
+                "A mapped household user is required.",
+            )
+            return
+
+        if msg["confirm_text"] != DELETE_CONFIRM_TEXT:
+            connection.send_error(
+                msg["id"],
+                "invalid_confirm_text",
+                "Type delete to confirm task deletion.",
+            )
+            return
+
+        store: TaskStore = runtime_data["store"]
+
+        async with runtime_data["task_save_lock"]:
+            tasks = await _load_tasks(store)
+            task = next(
+                (candidate for candidate in tasks if candidate.id == msg["task_id"]),
+                None,
+            )
+            if task is None:
+                connection.send_error(
+                    msg["id"],
+                    "task_not_found",
+                    f"Task {msg['task_id']!r} was not found.",
+                )
+                return
+
+            controls = await store.async_load_controls()
+            now = utc_now()
+            deletion_record = TaskDeletionRecord(
+                task_snapshot=task_definition_to_dict(task),
+                actor_ha_user_id=connection.user.id,
+                deleted_at=now,
+                undo_expires_at=now + TASK_DELETE_UNDO_WINDOW,
+            )
+
+            stored_tasks = [existing for existing in tasks if existing.id != task.id]
+            _dismiss_pending_confirmations_for_task(runtime_data, task.id)
+
+            await store.async_save_tasks(
+                {
+                    "tasks": [
+                        task_definition_to_dict(existing)
+                        for existing in stored_tasks
+                    ]
+                }
+            )
+
+            updated_tag_mappings = await _sync_task_nfc_mappings(store, stored_tasks)
+            _rebuild_nfc_service(
+                runtime_data,
+                tasks=stored_tasks,
+                tag_mappings=updated_tag_mappings,
+            )
+
+            await store.async_save_nfc(
+                {
+                    "discovery_entries": [
+                        nfc_discovery_entry_to_dict(entry)
+                        for entry in runtime_data["nfc"].get_discoveries()
+                    ]
+                }
+            )
+
+            await store.async_save_controls(
+                {
+                    "task_deletions": [
+                        *controls["task_deletions"],
+                        task_deletion_record_to_dict(deletion_record),
+                    ]
+                }
+            )
+
+        connection.send_result(
+            msg["id"],
+            {
+                "operation_id": deletion_record.id,
+                "task_id": task.id,
+                "undo_expires_at": deletion_record.undo_expires_at.isoformat(),
+            },
+        )
+
+    @websocket_api.websocket_command(
+        {
+            vol.Required("type"): f"{DOMAIN}/undo_delete_task_definition",
+            vol.Required("operation_id"): cv.string,
+        }
+    )
+    @websocket_api.async_response
+    async def ws_undo_delete_task_definition(
+        hass: HomeAssistant,
+        connection: websocket_api.ActiveConnection,
+        msg: dict[str, Any],
+    ) -> None:
+        runtime_data = _get_runtime_data(connection, msg)
+        if runtime_data is None:
+            return
+
+        if not _is_mapped_user(runtime_data, connection.user.id):
+            connection.send_error(
+                msg["id"],
+                "mapping_required",
+                "A mapped household user is required.",
+            )
+            return
+
+        store: TaskStore = runtime_data["store"]
+
+        async with runtime_data["task_save_lock"]:
+            controls = await store.async_load_controls()
+            deletion_records = [
+                task_deletion_record_from_dict(raw_record)
+                for raw_record in controls["task_deletions"]
+            ]
+            deletion_record = next(
+                (
+                    record
+                    for record in deletion_records
+                    if record.id == msg["operation_id"]
+                ),
+                None,
+            )
+            if deletion_record is None:
+                connection.send_error(
+                    msg["id"],
+                    "operation_not_found",
+                    "Delete operation was not found.",
+                )
+                return
+
+            if deletion_record.status != OperationStatus.ACTIVE:
+                connection.send_error(
+                    msg["id"],
+                    "operation_not_reversible",
+                    "Delete operation is not reversible.",
+                )
+                return
+
+            if utc_now() > deletion_record.undo_expires_at:
+                updated_records = []
+                for record in deletion_records:
+                    if record.id == deletion_record.id:
+                        record.status = OperationStatus.EXPIRED
+                    updated_records.append(task_deletion_record_to_dict(record))
+
+                await store.async_save_controls(
+                    {
+                        "task_deletions": updated_records,
+                    }
+                )
+                connection.send_error(
+                    msg["id"],
+                    "undo_window_expired",
+                    "Undo window has expired.",
+                )
+                return
+
+            tasks = await _load_tasks(store)
+            restored_task = task_definition_from_dict(deletion_record.task_snapshot)
+            stored_tasks = [existing for existing in tasks if existing.id != restored_task.id]
+            stored_tasks.append(restored_task)
+
+            await store.async_save_tasks(
+                {
+                    "tasks": [
+                        task_definition_to_dict(existing)
+                        for existing in stored_tasks
+                    ]
+                }
+            )
+
+            updated_tag_mappings = await _sync_task_nfc_mappings(store, stored_tasks)
+            _rebuild_nfc_service(
+                runtime_data,
+                tasks=stored_tasks,
+                tag_mappings=updated_tag_mappings,
+            )
+
+            await store.async_save_nfc(
+                {
+                    "discovery_entries": [
+                        nfc_discovery_entry_to_dict(entry)
+                        for entry in runtime_data["nfc"].get_discoveries()
+                    ]
+                }
+            )
+
+            updated_records = []
+            for record in deletion_records:
+                if record.id == deletion_record.id:
+                    record.status = OperationStatus.UNDONE
+                updated_records.append(task_deletion_record_to_dict(record))
+
+            await store.async_save_controls(
+                {
+                    "task_deletions": updated_records,
+                }
+            )
+
+        connection.send_result(
+            msg["id"],
+            {
+                "operation_id": deletion_record.id,
+                "status": OperationStatus.UNDONE.value,
+                "task": task_definition_to_dict(restored_task),
+            },
+        )
+
+    @websocket_api.websocket_command(
         {vol.Required("type"): f"{DOMAIN}/unmapped_nfc_tags"}
     )
     @websocket_api.require_admin
@@ -1389,6 +1670,8 @@ def async_register_websocket_api(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_save_task)
     websocket_api.async_register_command(hass, ws_archive_task)
     websocket_api.async_register_command(hass, ws_restore_task)
+    websocket_api.async_register_command(hass, ws_delete_task_definition)
+    websocket_api.async_register_command(hass, ws_undo_delete_task_definition)
     websocket_api.async_register_command(hass, ws_unmapped_nfc_tags)
     websocket_api.async_register_command(hass, ws_link_nfc_tag)
     websocket_api.async_register_command(hass, ws_confirm_completion)
