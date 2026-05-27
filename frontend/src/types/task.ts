@@ -43,6 +43,11 @@ export interface TaskDueInstance {
   skipped: boolean;
 }
 
+export interface SnapshotGroup {
+  date: string;
+  items: TaskDueInstance[];
+}
+
 export interface CompletionAttempt {
   id: string;
   task_id: string;

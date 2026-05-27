@@ -726,6 +726,7 @@ def async_register_websocket_api(hass: HomeAssistant) -> None:
         {
             vol.Required("type"): f"{DOMAIN}/due_instances",
             vol.Optional("from_date"): cv.string,
+            vol.Optional("to_date"): cv.string,
             vol.Optional("horizon_days", default=30): vol.Coerce(int),
         }
     )
@@ -750,7 +751,25 @@ def async_register_websocket_api(hass: HomeAssistant) -> None:
             connection.send_error(msg["id"], "invalid_from_date", str(err))
             return
 
-        horizon_days = msg["horizon_days"]
+        to_date_raw = msg.get("to_date")
+        if to_date_raw is not None:
+            try:
+                to_date = _parse_date(to_date_raw)
+            except ValueError as err:
+                connection.send_error(msg["id"], "invalid_to_date", str(err))
+                return
+
+            if to_date < from_date:
+                connection.send_error(
+                    msg["id"],
+                    "invalid_date_range",
+                    "to_date must be on or after from_date.",
+                )
+                return
+
+            horizon_days = (to_date - from_date).days + 1
+        else:
+            horizon_days = msg["horizon_days"]
 
         results: list[dict[str, Any]] = []
         for task in tasks:
@@ -802,6 +821,144 @@ def async_register_websocket_api(hass: HomeAssistant) -> None:
                 connection.send_error(msg["id"], "invalid_task", str(err))
                 return
 
+            stored_tasks = [existing for existing in tasks if existing.id != task.id]
+            stored_tasks.append(task)
+
+            await store.async_save_tasks(
+                {
+                    "tasks": [
+                        task_definition_to_dict(existing)
+                        for existing in stored_tasks
+                    ]
+                }
+            )
+
+            updated_tag_mappings = await _sync_task_nfc_mappings(store, stored_tasks)
+            _rebuild_nfc_service(
+                runtime_data,
+                tasks=stored_tasks,
+                tag_mappings=updated_tag_mappings,
+            )
+
+            await store.async_save_nfc(
+                {
+                    "discovery_entries": [
+                        nfc_discovery_entry_to_dict(entry)
+                        for entry in runtime_data["nfc"].get_discoveries()
+                    ]
+                }
+            )
+
+        connection.send_result(msg["id"], task_definition_to_dict(task))
+
+    @websocket_api.websocket_command(
+        {
+            vol.Required("type"): f"{DOMAIN}/archive_task",
+            vol.Required("task_id"): cv.string,
+        }
+    )
+    @websocket_api.require_admin
+    @websocket_api.async_response
+    async def ws_archive_task(
+        hass: HomeAssistant,
+        connection: websocket_api.ActiveConnection,
+        msg: dict[str, Any],
+    ) -> None:
+        runtime_data = _get_runtime_data(connection, msg)
+        if runtime_data is None:
+            return
+
+        store: TaskStore = runtime_data["store"]
+
+        async with runtime_data["task_save_lock"]:
+            tasks = await _load_tasks(store)
+            task = next(
+                (candidate for candidate in tasks if candidate.id == msg["task_id"]),
+                None,
+            )
+            if task is None:
+                connection.send_error(
+                    msg["id"],
+                    "task_not_found",
+                    f"Task {msg['task_id']!r} was not found.",
+                )
+                return
+
+            task.active = False
+            task.updated_at = utc_now()
+            stored_tasks = [existing for existing in tasks if existing.id != task.id]
+            stored_tasks.append(task)
+
+            await store.async_save_tasks(
+                {
+                    "tasks": [
+                        task_definition_to_dict(existing)
+                        for existing in stored_tasks
+                    ]
+                }
+            )
+
+            updated_tag_mappings = await _sync_task_nfc_mappings(store, stored_tasks)
+            _rebuild_nfc_service(
+                runtime_data,
+                tasks=stored_tasks,
+                tag_mappings=updated_tag_mappings,
+            )
+
+            await store.async_save_nfc(
+                {
+                    "discovery_entries": [
+                        nfc_discovery_entry_to_dict(entry)
+                        for entry in runtime_data["nfc"].get_discoveries()
+                    ]
+                }
+            )
+
+        connection.send_result(msg["id"], task_definition_to_dict(task))
+
+    @websocket_api.websocket_command(
+        {
+            vol.Required("type"): f"{DOMAIN}/restore_task",
+            vol.Required("task_id"): cv.string,
+        }
+    )
+    @websocket_api.require_admin
+    @websocket_api.async_response
+    async def ws_restore_task(
+        hass: HomeAssistant,
+        connection: websocket_api.ActiveConnection,
+        msg: dict[str, Any],
+    ) -> None:
+        runtime_data = _get_runtime_data(connection, msg)
+        if runtime_data is None:
+            return
+
+        store: TaskStore = runtime_data["store"]
+
+        async with runtime_data["task_save_lock"]:
+            tasks = await _load_tasks(store)
+            task = next(
+                (candidate for candidate in tasks if candidate.id == msg["task_id"]),
+                None,
+            )
+            if task is None:
+                connection.send_error(
+                    msg["id"],
+                    "task_not_found",
+                    f"Task {msg['task_id']!r} was not found.",
+                )
+                return
+
+            original_active = task.active
+            task.active = True
+            try:
+                _validate_unique_nfc_tag(task, tasks)
+            except ValueError as err:
+                task.active = original_active
+                connection.send_error(msg["id"], "invalid_task", str(err))
+                return
+
+            task.updated_at = utc_now()
             stored_tasks = [existing for existing in tasks if existing.id != task.id]
             stored_tasks.append(task)
 
@@ -1230,6 +1387,8 @@ def async_register_websocket_api(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_tasks)
     websocket_api.async_register_command(hass, ws_due_instances)
     websocket_api.async_register_command(hass, ws_save_task)
+    websocket_api.async_register_command(hass, ws_archive_task)
+    websocket_api.async_register_command(hass, ws_restore_task)
     websocket_api.async_register_command(hass, ws_unmapped_nfc_tags)
     websocket_api.async_register_command(hass, ws_link_nfc_tag)
     websocket_api.async_register_command(hass, ws_confirm_completion)
