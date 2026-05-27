@@ -86,7 +86,7 @@ describe("ha-task-manager-panel", () => {
     document.body.innerHTML = "";
   });
 
-  it("loads core data for non-admin users without requesting admin-only datasets", async () => {
+  it("shows manage tasks for mapped non-admin users without requesting admin-only datasets", async () => {
     const requestedTypes: string[] = [];
     const adminOnlyTypes = new Set([
       "ha_task_manager/profile_mappings",
@@ -156,6 +156,13 @@ describe("ha-task-manager-panel", () => {
       (button) => button.textContent?.trim() === "Setup"
     );
 
+    manageTasksButton?.click();
+    await settlePanel(panel);
+
+    const taskBuilderView = panel.shadowRoot?.querySelector("task-manager-task-builder-view") as
+      | HTMLElement
+      | null;
+
     expect(requestedTypes).toEqual([
       "ha_task_manager/current_profile",
       "ha_task_manager/profiles",
@@ -164,13 +171,12 @@ describe("ha-task-manager-panel", () => {
       "ha_task_manager/pending_confirmations",
     ]);
     expect(panel.shadowRoot?.textContent).not.toContain("admin only");
-    expect(manageTasksButton).toBeUndefined();
+    expect(manageTasksButton).toBeDefined();
     expect(setupButton).toBeUndefined();
-    expect(myTasksView).not.toBeNull();
-    expect((myTasksView as { tasks?: unknown[] }).tasks).toHaveLength(1);
+    expect(taskBuilderView).not.toBeNull();
   });
 
-  it("falls back to my tasks when a non-admin is forced onto the admin view", async () => {
+  it("falls back to my tasks when a non-admin is forced onto the setup view", async () => {
     const requestedTypes: string[] = [];
     const adminOnlyTypes = new Set([
       "ha_task_manager/profile_mappings",
@@ -230,7 +236,7 @@ describe("ha-task-manager-panel", () => {
 
     await settlePanel(panel);
 
-    (panel as unknown as { currentView: string }).currentView = "admin";
+    (panel as unknown as { currentView: string }).currentView = "setup";
     await settlePanel(panel);
 
     const myTasksView = panel.shadowRoot?.querySelector("task-manager-my-tasks-view") as
@@ -1697,6 +1703,117 @@ describe("ha-task-manager-panel", () => {
     });
   });
 
+  it("allows mapped non-admin users to open manage tasks and delete after typed confirm", async () => {
+    const requestedMessages: WsMessage[] = [];
+
+    vi.spyOn(window, "setInterval").mockReturnValue(1);
+    vi.spyOn(window, "clearInterval").mockImplementation(() => undefined);
+
+    const hass = createHass(async (message) => {
+      requestedMessages.push(message);
+      const type = String(message.type);
+
+      switch (type) {
+        case "ha_task_manager/current_profile":
+          return {
+            ha_user_id: "ha-user-1",
+            mapped: true,
+            profile_id: "profile-1",
+            display_name: "Alex",
+          };
+        case "ha_task_manager/profiles":
+          return [
+            {
+              id: "profile-1",
+              display_name: "Alex",
+              avatar_url: "",
+              created_at: "2026-05-10T00:00:00+00:00",
+            },
+          ];
+        case "ha_task_manager/tasks":
+          return [taskFixture()];
+        case "ha_task_manager/due_instances":
+          return [];
+        case "ha_task_manager/pending_confirmations":
+          return [];
+        case "ha_task_manager/delete_task_definition":
+          return {
+            operation_id: "delete-op-user-1",
+            task_id: String(message.task_id),
+            undo_expires_at: "2099-01-01T00:00:00+00:00",
+          };
+        default:
+          throw new Error(`Unexpected websocket call: ${type}`);
+      }
+    });
+
+    const panel = document.createElement("ha-task-manager-panel") as HaTaskManagerPanel;
+    panel.hass = hass;
+    document.body.append(panel);
+
+    await settlePanel(panel);
+
+    const manageTasksButton = Array.from(panel.shadowRoot?.querySelectorAll("nav button") ?? []).find(
+      (button) => button.textContent?.trim() === "Manage Tasks"
+    ) as HTMLButtonElement | undefined;
+    const setupButton = Array.from(panel.shadowRoot?.querySelectorAll("nav button") ?? []).find(
+      (button) => button.textContent?.trim() === "Setup"
+    );
+    expect(manageTasksButton).toBeDefined();
+    expect(setupButton).toBeUndefined();
+
+    manageTasksButton?.click();
+    await settlePanel(panel);
+
+    const taskBuilderView = panel.shadowRoot?.querySelector("task-manager-task-builder-view") as HTMLElement | null;
+    expect(taskBuilderView).not.toBeNull();
+
+    taskBuilderView?.dispatchEvent(
+      new CustomEvent("delete-task-definition-request", {
+        detail: { taskId: "task-1" },
+        bubbles: true,
+        composed: true,
+      })
+    );
+    await settlePanel(panel);
+
+    expect(
+      requestedMessages.filter((message) => String(message.type) === "ha_task_manager/delete_task_definition")
+    ).toHaveLength(0);
+
+    const dialog = panel.shadowRoot?.querySelector("task-manager-destructive-confirm-dialog") as
+      | ({ open?: boolean } & HTMLElement)
+      | null;
+    expect(dialog?.open).toBe(true);
+
+    const confirmInput = dialog?.shadowRoot?.querySelector('[data-action="confirm-input"]') as
+      | HTMLInputElement
+      | null;
+    const confirmButton = dialog?.shadowRoot?.querySelector('[data-action="confirm"]') as
+      | HTMLButtonElement
+      | null;
+
+    if (!confirmInput || !confirmButton) {
+      throw new Error("Expected destructive confirmation controls");
+    }
+
+    confirmInput.value = "delete";
+    confirmInput.dispatchEvent(new Event("input"));
+    await settlePanel(panel);
+    confirmButton.click();
+    await settlePanel(panel);
+
+    const deleteRequests = requestedMessages.filter(
+      (message) => String(message.type) === "ha_task_manager/delete_task_definition"
+    );
+
+    expect(deleteRequests).toHaveLength(1);
+    expect(deleteRequests[0]).toMatchObject({
+      task_id: "task-1",
+      confirm_text: "delete",
+    });
+  });
+
   it("requests analytics with include_deleted_task_history defaulting to true", async () => {
     const requestedMessages: WsMessage[] = [];
 
@@ -2328,6 +2445,171 @@ describe("ha-task-manager-panel", () => {
         (message) => String(message.type) === "ha_task_manager/undo_analytics_baseline_reset"
       )
     ).toHaveLength(1);
+  });
+
+  it("serializes overlapping undo clicks so only one undo request dispatches while in flight", async () => {
+    const requestedMessages: WsMessage[] = [];
+    const undoResetRequest = createDeferred<{
+      operation_id: string;
+      restored_baseline_at: string;
+      status: string;
+    }>();
+
+    vi.spyOn(window, "setInterval").mockReturnValue(1);
+    vi.spyOn(window, "clearInterval").mockImplementation(() => undefined);
+
+    const hass = createHass(async (message) => {
+      requestedMessages.push(message);
+      const type = String(message.type);
+
+      switch (type) {
+        case "ha_task_manager/current_profile":
+          return {
+            ha_user_id: "ha-user-1",
+            mapped: true,
+            profile_id: "profile-1",
+            display_name: "Alex",
+          };
+        case "ha_task_manager/profiles":
+          return [
+            {
+              id: "profile-1",
+              display_name: "Alex",
+              avatar_url: "",
+              created_at: "2026-05-10T00:00:00+00:00",
+            },
+          ];
+        case "ha_task_manager/tasks":
+          return [taskFixture()];
+        case "ha_task_manager/due_instances":
+          return [];
+        case "ha_task_manager/pending_confirmations":
+          return [];
+        case "ha_task_manager/profile_mappings":
+          return [];
+        case "ha_task_manager/ha_users":
+          return [];
+        case "ha_task_manager/unmapped_nfc_tags":
+          return [];
+        case "ha_task_manager/analytics":
+          return analyticsSnapshotFixture("profile-1", 0);
+        case "ha_task_manager/delete_task_definition":
+          return {
+            operation_id: "delete-op-1",
+            task_id: String(message.task_id),
+            undo_expires_at: "2099-01-01T00:00:00+00:00",
+          };
+        case "ha_task_manager/reset_analytics_baseline":
+          return {
+            operation_id: "reset-op-1",
+            new_baseline_at: "2026-05-14T09:10:00+00:00",
+            undo_expires_at: "2099-01-01T00:00:00+00:00",
+          };
+        case "ha_task_manager/undo_analytics_baseline_reset":
+          return undoResetRequest.promise;
+        case "ha_task_manager/undo_delete_task_definition":
+          return {
+            operation_id: String(message.operation_id),
+            status: "undone",
+            task: taskFixture(),
+          };
+        default:
+          throw new Error(`Unexpected websocket call: ${type}`);
+      }
+    }, { isAdmin: true });
+
+    const panel = document.createElement("ha-task-manager-panel") as HaTaskManagerPanel;
+    panel.hass = hass;
+    document.body.append(panel);
+
+    await settlePanel(panel);
+
+    const manageTasksButton = Array.from(panel.shadowRoot?.querySelectorAll("nav button") ?? []).find(
+      (button) => button.textContent?.trim() === "Manage Tasks"
+    ) as HTMLButtonElement | undefined;
+    manageTasksButton?.click();
+    await settlePanel(panel);
+
+    const triggerDialogConfirm = async (): Promise<void> => {
+      const dialog = panel.shadowRoot?.querySelector("task-manager-destructive-confirm-dialog") as
+        | HTMLElement
+        | null;
+      const confirmInput = dialog?.shadowRoot?.querySelector('[data-action="confirm-input"]') as
+        | HTMLInputElement
+        | null;
+      const confirmButton = dialog?.shadowRoot?.querySelector('[data-action="confirm"]') as
+        | HTMLButtonElement
+        | null;
+
+      if (!confirmInput || !confirmButton) {
+        throw new Error("Expected destructive confirmation controls");
+      }
+
+      confirmInput.value = "delete";
+      confirmInput.dispatchEvent(new Event("input"));
+      await settlePanel(panel);
+      confirmButton.click();
+      await settlePanel(panel);
+    };
+
+    const taskBuilderView = panel.shadowRoot?.querySelector("task-manager-task-builder-view") as HTMLElement | null;
+    taskBuilderView?.dispatchEvent(
+      new CustomEvent("delete-task-definition-request", {
+        detail: { taskId: "task-1" },
+        bubbles: true,
+        composed: true,
+      })
+    );
+    await settlePanel(panel);
+    await triggerDialogConfirm();
+
+    const analyticsButton = Array.from(panel.shadowRoot?.querySelectorAll("nav button") ?? []).find(
+      (button) => button.textContent?.trim() === "Analytics"
+    ) as HTMLButtonElement | undefined;
+    analyticsButton?.click();
+    await settlePanel(panel);
+
+    const analyticsView = panel.shadowRoot?.querySelector("task-manager-analytics-view") as HTMLElement | null;
+    const resetButton = analyticsView?.shadowRoot?.querySelector(
+      "[data-reset-analytics-baseline]"
+    ) as HTMLButtonElement | null;
+    resetButton?.click();
+    await settlePanel(panel);
+    await triggerDialogConfirm();
+
+    const undoButtons = Array.from(
+      panel.shadowRoot?.querySelectorAll("[data-destructive-undo-button]") ?? []
+    ) as HTMLButtonElement[];
+
+    expect(undoButtons).toHaveLength(2);
+
+    undoButtons[0].click();
+    await panel.updateComplete;
+    await Promise.resolve();
+    await panel.updateComplete;
+
+    expect(undoButtons[1].disabled).toBe(true);
+
+    undoButtons[1].click();
+    await panel.updateComplete;
+    await Promise.resolve();
+    await panel.updateComplete;
+
+    expect(
+      requestedMessages.filter(
+        (message) => String(message.type) === "ha_task_manager/undo_analytics_baseline_reset"
+      )
+    ).toHaveLength(1);
+    expect(
+      requestedMessages.filter((message) => String(message.type) === "ha_task_manager/undo_delete_task_definition")
+    ).toHaveLength(0);
+
+    undoResetRequest.resolve({
+      operation_id: "reset-op-1",
+      restored_baseline_at: "2026-05-13T00:00:00+00:00",
+      status: "undone",
+    });
+    await settlePanel(panel);
   });
 
   it("loads custom-range snapshots and passes due instances into schedule snapshot view", async () => {
@@ -3648,7 +3930,7 @@ describe("ha-task-manager-panel", () => {
 
     await settlePanel(panel);
 
-    expect(panel.shadowRoot?.querySelector("task-manager-task-builder-view")).toBeNull();
+    expect(panel.shadowRoot?.querySelector("task-manager-task-builder-view")).not.toBeNull();
     expect(requestedTypes).not.toContain("ha_task_manager/save_task");
   });
 });

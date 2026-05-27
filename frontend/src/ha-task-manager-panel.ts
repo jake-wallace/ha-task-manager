@@ -598,15 +598,15 @@ export class HaTaskManagerPanel extends LitElement {
         this.hasLoadedInitialData = true;
         this.lastLoadedUserContextKey = currentUserContextKey;
         this.hasLoadedSetupData = false;
-        this.setupLoading = this.activeView === "setup" || this.activeView === "admin";
+        this.setupLoading = this.activeView === "setup" || (this.activeView === "admin" && this.canAccessAdminViews);
         this.profileMappings = [];
         this.haUsers = [];
         this.unmappedTags = [];
         void this.loadCoreData();
-        if (this.activeView === "setup" || this.activeView === "admin") {
+        if (this.activeView === "setup" || (this.activeView === "admin" && this.canAccessAdminViews)) {
           void this.loadSetupData();
         }
-        if (this.activeView === "admin") {
+        if (this.activeView === "admin" && this.canAccessAdminViews) {
           void this.loadScheduleSnapshot();
         }
         this.startPendingPolling();
@@ -622,11 +622,14 @@ export class HaTaskManagerPanel extends LitElement {
         void this.loadAnalytics();
       }
 
-      if ((this.activeView === "setup" || this.activeView === "admin") && !this.hasLoadedSetupData) {
+      if (
+        (this.activeView === "setup" || (this.activeView === "admin" && this.canAccessAdminViews)) &&
+        !this.hasLoadedSetupData
+      ) {
         void this.loadSetupData();
       }
 
-      if (this.activeView === "admin") {
+      if (this.activeView === "admin" && this.canAccessAdminViews) {
         void this.loadScheduleSnapshot();
       }
     }
@@ -740,6 +743,8 @@ export class HaTaskManagerPanel extends LitElement {
       return nothing;
     }
 
+    const hasUndoInFlight = this.undoBusyOperationId !== "";
+
     return html`${this.undoBanners.map((undoBanner) => {
       const isUndoExpired = this.isUndoExpired(undoBanner);
       const undoBusy = this.undoBusyOperationId === undoBanner.operationId;
@@ -757,7 +762,7 @@ export class HaTaskManagerPanel extends LitElement {
             <button
               type="button"
               data-destructive-undo-button
-              ?disabled=${undoBusy || isUndoExpired}
+              ?disabled=${hasUndoInFlight || isUndoExpired}
               @click=${() => {
                 void this.handleUndoAction(undoBanner.operationId);
               }}
@@ -831,42 +836,46 @@ export class HaTaskManagerPanel extends LitElement {
               @restore-task-request=${this.handleRestoreTask}
               @delete-task-definition-request=${this.handleDeleteTaskDefinitionRequest}
             ></task-manager-task-builder-view>
-            <div class="snapshot-shell">
-              <div class="snapshot-controls">
-                <label>
-                  Snapshot from
-                  <input
-                    type="date"
-                    data-snapshot-from-date
-                    .value=${this.snapshotFromDate}
-                    @input=${this.handleSnapshotFromDateInput}
-                  />
-                </label>
-                <label>
-                  Snapshot to
-                  <input
-                    type="date"
-                    data-snapshot-to-date
-                    .value=${this.snapshotToDate}
-                    @input=${this.handleSnapshotToDateInput}
-                  />
-                </label>
-                <button type="button" data-load-snapshot-range @click=${this.handleLoadSnapshotRange}>
-                  Load snapshot
-                </button>
-              </div>
-              ${this.snapshotError ? html`<div class="snapshot-error">${this.snapshotError}</div>` : nothing}
-              <task-manager-schedule-snapshot-view
-                .snapshotGroups=${this.snapshotGroups}
-                .tasksById=${this.tasksById}
-                .profileLabelsById=${this.profileLabelsById}
-                .snapshotFromDate=${this.snapshotFromDate}
-                .snapshotToDate=${this.snapshotToDate}
-                .loading=${this.snapshotLoading}
-                .errorMessage=${this.snapshotError}
-                @edit-task-request=${this.handleSnapshotEditTask}
-              ></task-manager-schedule-snapshot-view>
-            </div>
+            ${this.canAccessAdminViews
+              ? html`
+                  <div class="snapshot-shell">
+                    <div class="snapshot-controls">
+                      <label>
+                        Snapshot from
+                        <input
+                          type="date"
+                          data-snapshot-from-date
+                          .value=${this.snapshotFromDate}
+                          @input=${this.handleSnapshotFromDateInput}
+                        />
+                      </label>
+                      <label>
+                        Snapshot to
+                        <input
+                          type="date"
+                          data-snapshot-to-date
+                          .value=${this.snapshotToDate}
+                          @input=${this.handleSnapshotToDateInput}
+                        />
+                      </label>
+                      <button type="button" data-load-snapshot-range @click=${this.handleLoadSnapshotRange}>
+                        Load snapshot
+                      </button>
+                    </div>
+                    ${this.snapshotError ? html`<div class="snapshot-error">${this.snapshotError}</div>` : nothing}
+                    <task-manager-schedule-snapshot-view
+                      .snapshotGroups=${this.snapshotGroups}
+                      .tasksById=${this.tasksById}
+                      .profileLabelsById=${this.profileLabelsById}
+                      .snapshotFromDate=${this.snapshotFromDate}
+                      .snapshotToDate=${this.snapshotToDate}
+                      .loading=${this.snapshotLoading}
+                      .errorMessage=${this.snapshotError}
+                      @edit-task-request=${this.handleSnapshotEditTask}
+                    ></task-manager-schedule-snapshot-view>
+                  </div>
+                `
+              : nothing}
           </div>
         `;
       case "setup":
@@ -1674,6 +1683,10 @@ export class HaTaskManagerPanel extends LitElement {
       return;
     }
 
+    if (this.undoBusyOperationId !== "") {
+      return;
+    }
+
     const mutationRequest = this.beginDestructiveMutation();
     if (!mutationRequest) {
       return;
@@ -2013,6 +2026,10 @@ export class HaTaskManagerPanel extends LitElement {
     return this.currentProfile?.mapped === true;
   }
 
+  private get canAccessManageTasksView(): boolean {
+    return this.canAccessAdminViews || this.canRunDestructiveActions;
+  }
+
   private get currentUserContextKey(): string {
     const userId = this.hass?.user?.id ?? "";
     const accessLevel = this.canAccessAdminViews ? "admin" : "user";
@@ -2020,7 +2037,11 @@ export class HaTaskManagerPanel extends LitElement {
   }
 
   private get activeView(): PanelView {
-    if ((this.currentView === "setup" || this.currentView === "admin") && !this.canAccessAdminViews) {
+    if (this.currentView === "setup" && !this.canAccessAdminViews) {
+      return "my-tasks";
+    }
+
+    if (this.currentView === "admin" && !this.canAccessManageTasksView) {
       return "my-tasks";
     }
 
@@ -2028,20 +2049,32 @@ export class HaTaskManagerPanel extends LitElement {
   }
 
   private get navigationTabs(): NavigationTab[] {
-    return NAVIGATION_TABS.filter(
-      (tab) => (tab.id !== "setup" && tab.id !== "admin") || this.canAccessAdminViews
-    );
+    return NAVIGATION_TABS.filter((tab) => {
+      if (tab.id === "setup") {
+        return this.canAccessAdminViews;
+      }
+
+      if (tab.id === "admin") {
+        return this.canAccessManageTasksView;
+      }
+
+      return true;
+    });
   }
 
   private selectView(view: PanelView): void {
-    if (view === "setup" || view === "admin") {
+    if (view === "setup") {
       if (!this.canAccessAdminViews) {
         return;
       }
 
-      if (view === "setup" && !this.hasLoadedSetupData) {
+      if (!this.hasLoadedSetupData) {
         this.setupLoading = true;
       }
+    }
+
+    if (view === "admin" && !this.canAccessManageTasksView) {
+      return;
     }
 
     if (view !== "setup") {
