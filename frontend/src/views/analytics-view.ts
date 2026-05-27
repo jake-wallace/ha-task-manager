@@ -48,7 +48,7 @@ export class AnalyticsView extends LitElement {
 
   @property({ attribute: false }) public analytics: Record<string, ProfileAnalyticsSnapshot> = {};
 
-  @property({ type: Boolean }) public includeDeletedTaskHistory = false;
+  @property({ type: Boolean }) public includeDeletedTaskHistory = true;
 
   @property({ type: Boolean }) public loading = false;
 

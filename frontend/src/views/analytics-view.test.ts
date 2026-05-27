@@ -32,7 +32,6 @@ describe("task-manager-analytics-view", () => {
     const element = document.createElement("task-manager-analytics-view") as AnalyticsView;
     const includeDeletedEvents: Array<{ includeDeletedTaskHistory: boolean }> = [];
 
-    element.includeDeletedTaskHistory = false;
     element.addEventListener("include-deleted-history-change", (event) => {
       includeDeletedEvents.push(
         (event as CustomEvent<{ includeDeletedTaskHistory: boolean }>).detail
@@ -50,15 +49,20 @@ describe("task-manager-analytics-view", () => {
       throw new Error("Expected include deleted history toggle");
     }
 
+    includeDeletedToggle.checked = false;
+    includeDeletedToggle.dispatchEvent(new Event("change"));
+
     includeDeletedToggle.checked = true;
     includeDeletedToggle.dispatchEvent(new Event("change"));
 
-    expect(includeDeletedEvents).toEqual([{ includeDeletedTaskHistory: true }]);
+    expect(includeDeletedEvents).toEqual([
+      { includeDeletedTaskHistory: false },
+      { includeDeletedTaskHistory: true },
+    ]);
   });
 
-  it("reflects includeDeletedTaskHistory state in the toggle", async () => {
+  it("defaults includeDeletedTaskHistory to true and renders checked toggle", async () => {
     const element = document.createElement("task-manager-analytics-view") as AnalyticsView;
-    element.includeDeletedTaskHistory = true;
 
     document.body.append(element);
     await element.updateComplete;
@@ -67,6 +71,7 @@ describe("task-manager-analytics-view", () => {
       "[data-include-deleted-history-toggle]"
     ) as HTMLInputElement | null;
 
+    expect(element.includeDeletedTaskHistory).toBe(true);
     expect(includeDeletedToggle?.checked).toBe(true);
   });
 });
