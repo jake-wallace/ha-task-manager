@@ -183,6 +183,10 @@ def _expand_due_dates(
 ) -> list[date]:
     rule = task.recurrence
 
+    if rule.frequency == RecurrenceFrequency.NONE:
+        if start_date <= task.start_date <= end_date:
+            return [task.start_date]
+        return []
     if rule.frequency == RecurrenceFrequency.DAILY:
         return _expand_daily(
             anchor_date=task.start_date,

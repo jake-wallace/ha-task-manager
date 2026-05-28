@@ -448,3 +448,23 @@ def test_actionable_selection_uses_lookback_as_backlog_search_chunk() -> None:
         (date(2026, 5, 2), 3),
         (date(2026, 5, 1), 1),
     ]
+
+
+def test_one_off_task_generates_single_instance(task_domain_service: TaskDomainService) -> None:
+    """Test that a task with NONE frequency yields exactly one instance on its start date."""
+    target_date = date(2026, 6, 1)
+    task = TaskDefinition(
+        title="One-off chore",
+        recurrence=RecurrenceRule(frequency=RecurrenceFrequency.NONE),
+        start_date=target_date,
+    )
+
+    instances = task_domain_service.project_due_instances(
+        task=task,
+        from_date=date(2026, 5, 1),
+        horizon_days=62,
+    )
+
+    assert len(instances) == 1
+    assert instances[0].due_date == target_date
+
