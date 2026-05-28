@@ -1,4 +1,4 @@
-export type RecurrenceFrequency = "daily" | "weekly" | "monthly" | "custom_days";
+export type RecurrenceFrequency = "none" | "daily" | "weekly" | "monthly" | "custom_days";
 
 export type CompletionSource = "manual" | "nfc_phone" | "nfc_reader";
 
