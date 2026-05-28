@@ -232,21 +232,8 @@ describe("task-manager-task-builder-view", () => {
     ]);
   });
 
-<<<<<<< HEAD
   it("shows an actionable error when submitting with no assignable profiles", async () => {
     const element = document.createElement("task-manager-task-builder-view") as TaskBuilderView;
-=======
-  it("creates a task when crypto.randomUUID is unavailable", async () => {
-    const element = document.createElement("task-manager-task-builder-view") as TaskBuilderView;
-    element.profiles = [
-      {
-        id: "profile-1",
-        display_name: "Alex Profile",
-        avatar_url: "",
-        created_at: "2026-05-10T00:00:00+00:00",
-      },
-    ];
->>>>>>> ha-task-manager-impl
 
     document.body.append(element);
     await element.updateComplete;
