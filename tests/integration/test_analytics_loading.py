@@ -116,6 +116,33 @@ async def _seed_analytics_store(store: TaskStore) -> None:
     )
 
 
+def _profiles_payload(*, mapped_ha_user_id: str) -> dict[str, object]:
+    return {
+        "profiles": [
+            {
+                "id": "profile-alice",
+                "display_name": "Alice",
+                "avatar_url": "",
+                "created_at": "2026-05-10T00:00:00+00:00",
+            },
+            {
+                "id": "profile-bob",
+                "display_name": "Bob",
+                "avatar_url": "",
+                "created_at": "2026-05-10T00:00:00+00:00",
+            },
+        ],
+        "mappings": [
+            {
+                "id": "mapping-alice",
+                "ha_user_id": mapped_ha_user_id,
+                "profile_id": "profile-alice",
+                "created_at": "2026-05-10T00:00:00+00:00",
+            }
+        ],
+    }
+
+
 async def test_analytics_loading_returns_profile_scoped_snapshot(
     enable_custom_integrations,
     hass,
@@ -361,3 +388,112 @@ async def test_analytics_keeps_historical_kpis_for_paused_tasks(
     assert response["result"]["on_time_count"] == 1
     assert response["result"]["late_count"] == 0
     assert response["result"]["missed_count"] == 2
+
+
+async def test_analytics_excludes_deleted_history_when_flag_off(
+    enable_custom_integrations,
+    hass,
+    hass_ws_client,
+    hass_admin_user,
+) -> None:
+    store = TaskStore(hass)
+    await _seed_analytics_store(store)
+    await store.async_save_profiles(_profiles_payload(mapped_ha_user_id=hass_admin_user.id))
+
+    entry = MockConfigEntry(domain=DOMAIN, title="Task Manager")
+    entry.add_to_hass(hass)
+
+    assert await hass.config_entries.async_setup(entry.entry_id)
+
+    client = await hass_ws_client(hass)
+    await client.send_json_auto_id(
+        {
+            "type": "ha_task_manager/delete_task_definition",
+            "task_id": "task-dishes",
+            "confirm_text": "delete",
+        }
+    )
+    delete_response = await client.receive_json()
+    assert delete_response["success"] is True
+
+    await client.send_json_auto_id(
+        {
+            "type": "ha_task_manager/analytics",
+            "profile_id": "profile-alice",
+            "as_of": "2026-05-13",
+            "horizon_days": 14,
+            "include_deleted_task_history": False,
+        }
+    )
+    analytics_response = await client.receive_json()
+
+    assert analytics_response["success"] is True
+    assert analytics_response["result"]["on_time_count"] == 0
+    assert analytics_response["result"]["late_count"] == 0
+
+
+async def test_analytics_reflects_persisted_baseline_after_reset_and_undo(
+    enable_custom_integrations,
+    hass,
+    hass_ws_client,
+    hass_admin_user,
+) -> None:
+    store = TaskStore(hass)
+    await _seed_analytics_store(store)
+    await store.async_save_profiles(_profiles_payload(mapped_ha_user_id=hass_admin_user.id))
+
+    entry = MockConfigEntry(domain=DOMAIN, title="Task Manager")
+    entry.add_to_hass(hass)
+
+    assert await hass.config_entries.async_setup(entry.entry_id)
+
+    client = await hass_ws_client(hass)
+    await client.send_json_auto_id(
+        {
+            "type": "ha_task_manager/reset_analytics_baseline",
+            "confirm_text": "delete",
+        }
+    )
+    reset_response = await client.receive_json()
+
+    assert reset_response["success"] is True
+    operation_id = reset_response["result"]["operation_id"]
+    as_of = reset_response["result"]["new_baseline_at"][:10]
+
+    await client.send_json_auto_id(
+        {
+            "type": "ha_task_manager/analytics",
+            "profile_id": "profile-alice",
+            "as_of": as_of,
+            "horizon_days": 4,
+        }
+    )
+    analytics_after_reset = await client.receive_json()
+
+    assert analytics_after_reset["success"] is True
+    assert analytics_after_reset["result"]["on_time_count"] == 0
+    assert analytics_after_reset["result"]["late_count"] == 0
+    assert analytics_after_reset["result"]["missed_count"] == 0
+
+    await client.send_json_auto_id(
+        {
+            "type": "ha_task_manager/undo_analytics_baseline_reset",
+            "operation_id": operation_id,
+        }
+    )
+    undo_response = await client.receive_json()
+
+    assert undo_response["success"] is True
+
+    await client.send_json_auto_id(
+        {
+            "type": "ha_task_manager/analytics",
+            "profile_id": "profile-alice",
+            "as_of": as_of,
+            "horizon_days": 4,
+        }
+    )
+    analytics_after_undo = await client.receive_json()
+
+    assert analytics_after_undo["success"] is True
+    assert analytics_after_undo["result"]["missed_count"] == 3

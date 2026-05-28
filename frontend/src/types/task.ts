@@ -119,6 +119,13 @@ export interface DailyCompletionBucket {
   count: number;
 }
 
+export interface AnalyticsQuery {
+  profileId: string;
+  asOf?: string;
+  horizonDays?: number;
+  includeDeletedTaskHistory?: boolean;
+}
+
 export interface ProfileAnalyticsSnapshot {
   profile_id: string;
   computed_at: string;
@@ -128,4 +135,28 @@ export interface ProfileAnalyticsSnapshot {
   missed_count: number;
   current_streak: number;
   longest_streak: number;
+}
+
+export interface DeleteTaskDefinitionResult {
+  operation_id: string;
+  task_id: string;
+  undo_expires_at: string;
+}
+
+export interface UndoDeleteTaskDefinitionResult {
+  operation_id: string;
+  status: "undone";
+  task: TaskDefinition;
+}
+
+export interface ResetAnalyticsBaselineResult {
+  operation_id: string;
+  new_baseline_at: string;
+  undo_expires_at: string;
+}
+
+export interface UndoAnalyticsBaselineResetResult {
+  operation_id: string;
+  restored_baseline_at: string | null;
+  status: "undone";
 }

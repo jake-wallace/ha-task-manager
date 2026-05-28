@@ -181,7 +181,7 @@ export class TaskBuilderView extends LitElement {
 
     .task-row {
       display: grid;
-      grid-template-columns: minmax(0, 1fr) auto auto;
+      grid-template-columns: minmax(0, 1fr) repeat(3, auto);
       gap: 8px;
       align-items: center;
     }
@@ -482,6 +482,15 @@ export class TaskBuilderView extends LitElement {
                         >
                           Archive
                         </button>
+                        <button
+                          class="inline-action"
+                          type="button"
+                          data-delete-task-id=${task.id}
+                          ?disabled=${this.saving}
+                          @click=${() => this.requestDelete(task.id)}
+                        >
+                          Delete
+                        </button>
                       </div>
                     `
                   )}
@@ -518,6 +527,15 @@ export class TaskBuilderView extends LitElement {
                           @click=${() => this.requestRestore(task.id)}
                         >
                           Restore
+                        </button>
+                        <button
+                          class="inline-action"
+                          type="button"
+                          data-delete-task-id=${task.id}
+                          ?disabled=${this.saving}
+                          @click=${() => this.requestDelete(task.id)}
+                        >
+                          Delete
                         </button>
                       </div>
                     `
@@ -761,6 +779,16 @@ export class TaskBuilderView extends LitElement {
   private requestRestore(taskId: string): void {
     this.dispatchEvent(
       new CustomEvent("restore-task-request", {
+        detail: { taskId },
+        bubbles: true,
+        composed: true,
+      })
+    );
+  }
+
+  private requestDelete(taskId: string): void {
+    this.dispatchEvent(
+      new CustomEvent("delete-task-definition-request", {
         detail: { taskId },
         bubbles: true,
         composed: true,

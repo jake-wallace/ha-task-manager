@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+vi.mock("./components/analytics-chart", () => ({}));
+
 import "./ha-task-manager-panel";
 import type { HaTaskManagerPanel } from "./ha-task-manager-panel";
 import type { TaskDefinition } from "./types/task";
@@ -44,6 +46,19 @@ function createDeferred<T>(): Deferred<T> {
   return { promise, resolve, reject };
 }
 
+function analyticsSnapshotFixture(profileId: string, onTimeCount = 0) {
+  return {
+    profile_id: profileId,
+    computed_at: "2026-05-14T09:00:00+00:00",
+    daily_completions: [],
+    on_time_count: onTimeCount,
+    late_count: 0,
+    missed_count: 0,
+    current_streak: 0,
+    longest_streak: 0,
+  };
+}
+
 function createHass(
   callHandler: (message: WsMessage) => Promise<unknown>,
   options: { isAdmin?: boolean; userId?: string } = {}
@@ -71,7 +86,7 @@ describe("ha-task-manager-panel", () => {
     document.body.innerHTML = "";
   });
 
-  it("loads core data for non-admin users without requesting admin-only datasets", async () => {
+  it("shows manage tasks for mapped non-admin users without requesting admin-only datasets", async () => {
     const requestedTypes: string[] = [];
     const adminOnlyTypes = new Set([
       "ha_task_manager/profile_mappings",
@@ -136,10 +151,17 @@ describe("ha-task-manager-panel", () => {
       | null;
     const manageTasksButton = Array.from(panel.shadowRoot?.querySelectorAll("nav button") ?? []).find(
       (button) => button.textContent?.trim() === "Manage Tasks"
-    );
+    ) as HTMLButtonElement | undefined;
     const setupButton = Array.from(panel.shadowRoot?.querySelectorAll("nav button") ?? []).find(
       (button) => button.textContent?.trim() === "Setup"
     );
+
+    manageTasksButton?.click();
+    await settlePanel(panel);
+
+    const taskBuilderView = panel.shadowRoot?.querySelector("task-manager-task-builder-view") as
+      | HTMLElement
+      | null;
 
     expect(requestedTypes).toEqual([
       "ha_task_manager/current_profile",
@@ -149,13 +171,12 @@ describe("ha-task-manager-panel", () => {
       "ha_task_manager/pending_confirmations",
     ]);
     expect(panel.shadowRoot?.textContent).not.toContain("admin only");
-    expect(manageTasksButton).toBeUndefined();
+    expect(manageTasksButton).toBeDefined();
     expect(setupButton).toBeUndefined();
-    expect(myTasksView).not.toBeNull();
-    expect((myTasksView as { tasks?: unknown[] }).tasks).toHaveLength(1);
+    expect(taskBuilderView).not.toBeNull();
   });
 
-  it("falls back to my tasks when a non-admin is forced onto the admin view", async () => {
+  it("falls back to my tasks when a non-admin is forced onto the setup view", async () => {
     const requestedTypes: string[] = [];
     const adminOnlyTypes = new Set([
       "ha_task_manager/profile_mappings",
@@ -215,7 +236,7 @@ describe("ha-task-manager-panel", () => {
 
     await settlePanel(panel);
 
-    (panel as unknown as { currentView: string }).currentView = "admin";
+    (panel as unknown as { currentView: string }).currentView = "setup";
     await settlePanel(panel);
 
     const myTasksView = panel.shadowRoot?.querySelector("task-manager-my-tasks-view") as
@@ -1573,6 +1594,1024 @@ describe("ha-task-manager-panel", () => {
     expect(refreshedBuilderView?.tasks?.find((task) => task.id === "task-1")?.active).toBe(true);
   });
 
+  it("sends delete-task-definition only after typed confirm in the destructive dialog", async () => {
+    const requestedMessages: WsMessage[] = [];
+    const nowIso = "2026-05-14T09:00:00+00:00";
+
+    vi.spyOn(window, "setInterval").mockReturnValue(1);
+    vi.spyOn(window, "clearInterval").mockImplementation(() => undefined);
+
+    const hass = createHass(async (message) => {
+      requestedMessages.push(message);
+      const type = String(message.type);
+
+      switch (type) {
+        case "ha_task_manager/current_profile":
+          return {
+            ha_user_id: "ha-user-1",
+            mapped: true,
+            profile_id: "profile-1",
+            display_name: "Alex",
+          };
+        case "ha_task_manager/profiles":
+          return [
+            {
+              id: "profile-1",
+              display_name: "Alex",
+              avatar_url: "",
+              created_at: nowIso,
+            },
+          ];
+        case "ha_task_manager/tasks":
+          return [taskFixture()];
+        case "ha_task_manager/due_instances":
+          return [];
+        case "ha_task_manager/pending_confirmations":
+          return [];
+        case "ha_task_manager/profile_mappings":
+          return [];
+        case "ha_task_manager/ha_users":
+          return [];
+        case "ha_task_manager/unmapped_nfc_tags":
+          return [];
+        case "ha_task_manager/delete_task_definition":
+          return {
+            operation_id: "delete-op-1",
+            task_id: String(message.task_id),
+            undo_expires_at: "2099-01-01T00:00:00+00:00",
+          };
+        default:
+          throw new Error(`Unexpected websocket call: ${type}`);
+      }
+    }, { isAdmin: true });
+
+    const panel = document.createElement("ha-task-manager-panel") as HaTaskManagerPanel;
+    panel.hass = hass;
+    document.body.append(panel);
+
+    await settlePanel(panel);
+
+    const manageTasksButton = Array.from(panel.shadowRoot?.querySelectorAll("nav button") ?? []).find(
+      (button) => button.textContent?.trim() === "Manage Tasks"
+    ) as HTMLButtonElement | undefined;
+    manageTasksButton?.click();
+    await settlePanel(panel);
+
+    const taskBuilderView = panel.shadowRoot?.querySelector("task-manager-task-builder-view") as HTMLElement | null;
+    taskBuilderView?.dispatchEvent(
+      new CustomEvent("delete-task-definition-request", {
+        detail: { taskId: "task-1" },
+        bubbles: true,
+        composed: true,
+      })
+    );
+    await settlePanel(panel);
+
+    expect(
+      requestedMessages.filter((message) => String(message.type) === "ha_task_manager/delete_task_definition")
+    ).toHaveLength(0);
+
+    const dialog = panel.shadowRoot?.querySelector("task-manager-destructive-confirm-dialog") as
+      | ({ open?: boolean } & HTMLElement)
+      | null;
+    expect(dialog?.open).toBe(true);
+
+    const confirmInput = dialog?.shadowRoot?.querySelector('[data-action="confirm-input"]') as
+      | HTMLInputElement
+      | null;
+    const confirmButton = dialog?.shadowRoot?.querySelector('[data-action="confirm"]') as
+      | HTMLButtonElement
+      | null;
+    if (!confirmInput || !confirmButton) {
+      throw new Error("Expected destructive confirmation controls");
+    }
+
+    confirmInput.value = "delete";
+    confirmInput.dispatchEvent(new Event("input"));
+    await settlePanel(panel);
+    confirmButton.click();
+    await settlePanel(panel);
+
+    const deleteRequests = requestedMessages.filter(
+      (message) => String(message.type) === "ha_task_manager/delete_task_definition"
+    );
+
+    expect(deleteRequests).toHaveLength(1);
+    expect(deleteRequests[0]).toMatchObject({
+      task_id: "task-1",
+      confirm_text: "delete",
+    });
+  });
+
+  it("allows mapped non-admin users to open manage tasks and delete after typed confirm", async () => {
+    const requestedMessages: WsMessage[] = [];
+
+    vi.spyOn(window, "setInterval").mockReturnValue(1);
+    vi.spyOn(window, "clearInterval").mockImplementation(() => undefined);
+
+    const hass = createHass(async (message) => {
+      requestedMessages.push(message);
+      const type = String(message.type);
+
+      switch (type) {
+        case "ha_task_manager/current_profile":
+          return {
+            ha_user_id: "ha-user-1",
+            mapped: true,
+            profile_id: "profile-1",
+            display_name: "Alex",
+          };
+        case "ha_task_manager/profiles":
+          return [
+            {
+              id: "profile-1",
+              display_name: "Alex",
+              avatar_url: "",
+              created_at: "2026-05-10T00:00:00+00:00",
+            },
+          ];
+        case "ha_task_manager/tasks":
+          return [taskFixture()];
+        case "ha_task_manager/due_instances":
+          return [];
+        case "ha_task_manager/pending_confirmations":
+          return [];
+        case "ha_task_manager/delete_task_definition":
+          return {
+            operation_id: "delete-op-user-1",
+            task_id: String(message.task_id),
+            undo_expires_at: "2099-01-01T00:00:00+00:00",
+          };
+        default:
+          throw new Error(`Unexpected websocket call: ${type}`);
+      }
+    });
+
+    const panel = document.createElement("ha-task-manager-panel") as HaTaskManagerPanel;
+    panel.hass = hass;
+    document.body.append(panel);
+
+    await settlePanel(panel);
+
+    const manageTasksButton = Array.from(panel.shadowRoot?.querySelectorAll("nav button") ?? []).find(
+      (button) => button.textContent?.trim() === "Manage Tasks"
+    ) as HTMLButtonElement | undefined;
+    const setupButton = Array.from(panel.shadowRoot?.querySelectorAll("nav button") ?? []).find(
+      (button) => button.textContent?.trim() === "Setup"
+    );
+    expect(manageTasksButton).toBeDefined();
+    expect(setupButton).toBeUndefined();
+
+    manageTasksButton?.click();
+    await settlePanel(panel);
+
+    const taskBuilderView = panel.shadowRoot?.querySelector("task-manager-task-builder-view") as HTMLElement | null;
+    expect(taskBuilderView).not.toBeNull();
+
+    taskBuilderView?.dispatchEvent(
+      new CustomEvent("delete-task-definition-request", {
+        detail: { taskId: "task-1" },
+        bubbles: true,
+        composed: true,
+      })
+    );
+    await settlePanel(panel);
+
+    expect(
+      requestedMessages.filter((message) => String(message.type) === "ha_task_manager/delete_task_definition")
+    ).toHaveLength(0);
+
+    const dialog = panel.shadowRoot?.querySelector("task-manager-destructive-confirm-dialog") as
+      | ({ open?: boolean } & HTMLElement)
+      | null;
+    expect(dialog?.open).toBe(true);
+
+    const confirmInput = dialog?.shadowRoot?.querySelector('[data-action="confirm-input"]') as
+      | HTMLInputElement
+      | null;
+    const confirmButton = dialog?.shadowRoot?.querySelector('[data-action="confirm"]') as
+      | HTMLButtonElement
+      | null;
+
+    if (!confirmInput || !confirmButton) {
+      throw new Error("Expected destructive confirmation controls");
+    }
+
+    confirmInput.value = "delete";
+    confirmInput.dispatchEvent(new Event("input"));
+    await settlePanel(panel);
+    confirmButton.click();
+    await settlePanel(panel);
+
+    const deleteRequests = requestedMessages.filter(
+      (message) => String(message.type) === "ha_task_manager/delete_task_definition"
+    );
+
+    expect(deleteRequests).toHaveLength(1);
+    expect(deleteRequests[0]).toMatchObject({
+      task_id: "task-1",
+      confirm_text: "delete",
+    });
+  });
+
+  it("requests analytics with include_deleted_task_history defaulting to true", async () => {
+    const requestedMessages: WsMessage[] = [];
+
+    vi.spyOn(window, "setInterval").mockReturnValue(1);
+    vi.spyOn(window, "clearInterval").mockImplementation(() => undefined);
+
+    const hass = createHass(async (message) => {
+      requestedMessages.push(message);
+      const type = String(message.type);
+
+      switch (type) {
+        case "ha_task_manager/current_profile":
+          return {
+            ha_user_id: "ha-user-1",
+            mapped: true,
+            profile_id: "profile-1",
+            display_name: "Alex",
+          };
+        case "ha_task_manager/profiles":
+          return [
+            {
+              id: "profile-1",
+              display_name: "Alex",
+              avatar_url: "",
+              created_at: "2026-05-10T00:00:00+00:00",
+            },
+          ];
+        case "ha_task_manager/tasks":
+          return [taskFixture()];
+        case "ha_task_manager/due_instances":
+          return [];
+        case "ha_task_manager/pending_confirmations":
+          return [];
+        case "ha_task_manager/analytics":
+          return {
+            profile_id: "profile-1",
+            computed_at: "2026-05-14T09:00:00+00:00",
+            daily_completions: [],
+            on_time_count: 0,
+            late_count: 0,
+            missed_count: 0,
+            current_streak: 0,
+            longest_streak: 0,
+          };
+        default:
+          throw new Error(`Unexpected websocket call: ${type}`);
+      }
+    });
+
+    const panel = document.createElement("ha-task-manager-panel") as HaTaskManagerPanel;
+    panel.hass = hass;
+    document.body.append(panel);
+
+    await settlePanel(panel);
+
+    const analyticsButton = Array.from(panel.shadowRoot?.querySelectorAll("nav button") ?? []).find(
+      (button) => button.textContent?.trim() === "Analytics"
+    ) as HTMLButtonElement | undefined;
+    analyticsButton?.click();
+    await settlePanel(panel);
+
+    const analyticsRequest = requestedMessages.find(
+      (message) => String(message.type) === "ha_task_manager/analytics"
+    );
+
+    expect(analyticsRequest).toBeDefined();
+    expect(analyticsRequest?.include_deleted_task_history).toBe(true);
+  });
+
+  it("propagates include-deleted toggle false to analytics websocket payload", async () => {
+    const requestedMessages: WsMessage[] = [];
+
+    vi.spyOn(window, "setInterval").mockReturnValue(1);
+    vi.spyOn(window, "clearInterval").mockImplementation(() => undefined);
+
+    const hass = createHass(async (message) => {
+      requestedMessages.push(message);
+      const type = String(message.type);
+
+      switch (type) {
+        case "ha_task_manager/current_profile":
+          return {
+            ha_user_id: "ha-user-1",
+            mapped: true,
+            profile_id: "profile-1",
+            display_name: "Alex",
+          };
+        case "ha_task_manager/profiles":
+          return [
+            {
+              id: "profile-1",
+              display_name: "Alex",
+              avatar_url: "",
+              created_at: "2026-05-10T00:00:00+00:00",
+            },
+          ];
+        case "ha_task_manager/tasks":
+          return [taskFixture()];
+        case "ha_task_manager/due_instances":
+          return [];
+        case "ha_task_manager/pending_confirmations":
+          return [];
+        case "ha_task_manager/analytics":
+          return {
+            profile_id: "profile-1",
+            computed_at: "2026-05-14T09:00:00+00:00",
+            daily_completions: [],
+            on_time_count: 0,
+            late_count: 0,
+            missed_count: 0,
+            current_streak: 0,
+            longest_streak: 0,
+          };
+        default:
+          throw new Error(`Unexpected websocket call: ${type}`);
+      }
+    });
+
+    const panel = document.createElement("ha-task-manager-panel") as HaTaskManagerPanel;
+    panel.hass = hass;
+    document.body.append(panel);
+
+    await settlePanel(panel);
+
+    const analyticsButton = Array.from(panel.shadowRoot?.querySelectorAll("nav button") ?? []).find(
+      (button) => button.textContent?.trim() === "Analytics"
+    ) as HTMLButtonElement | undefined;
+    analyticsButton?.click();
+    await settlePanel(panel);
+
+    const analyticsView = panel.shadowRoot?.querySelector("task-manager-analytics-view") as HTMLElement | null;
+    const includeToggle = analyticsView?.shadowRoot?.querySelector(
+      "[data-include-deleted-history-toggle]"
+    ) as HTMLInputElement | null;
+
+    if (!includeToggle) {
+      throw new Error("Expected include-deleted-history toggle");
+    }
+
+    includeToggle.checked = false;
+    includeToggle.dispatchEvent(new Event("change"));
+    await settlePanel(panel);
+
+    const analyticsRequests = requestedMessages.filter(
+      (message) => String(message.type) === "ha_task_manager/analytics"
+    );
+
+    expect(analyticsRequests).toHaveLength(2);
+    expect(analyticsRequests[0]?.include_deleted_task_history).toBe(true);
+    expect(analyticsRequests[1]?.include_deleted_task_history).toBe(false);
+  });
+
+  it("keeps latest analytics toggle response when older include-deleted requests resolve late", async () => {
+    const analyticsRequests: Array<{ includeDeleted: boolean; deferred: Deferred<unknown> }> = [];
+
+    vi.spyOn(window, "setInterval").mockReturnValue(1);
+    vi.spyOn(window, "clearInterval").mockImplementation(() => undefined);
+
+    const hass = createHass(async (message) => {
+      const type = String(message.type);
+
+      switch (type) {
+        case "ha_task_manager/current_profile":
+          return {
+            ha_user_id: "ha-user-1",
+            mapped: true,
+            profile_id: "profile-1",
+            display_name: "Alex",
+          };
+        case "ha_task_manager/profiles":
+          return [
+            {
+              id: "profile-1",
+              display_name: "Alex",
+              avatar_url: "",
+              created_at: "2026-05-10T00:00:00+00:00",
+            },
+          ];
+        case "ha_task_manager/tasks":
+          return [taskFixture()];
+        case "ha_task_manager/due_instances":
+          return [];
+        case "ha_task_manager/pending_confirmations":
+          return [];
+        case "ha_task_manager/analytics": {
+          const deferred = createDeferred<unknown>();
+          analyticsRequests.push({
+            includeDeleted: Boolean(message.include_deleted_task_history),
+            deferred,
+          });
+          return deferred.promise;
+        }
+        default:
+          throw new Error(`Unexpected websocket call: ${type}`);
+      }
+    });
+
+    const panel = document.createElement("ha-task-manager-panel") as HaTaskManagerPanel;
+    panel.hass = hass;
+    document.body.append(panel);
+
+    await settlePanel(panel);
+
+    const analyticsButton = Array.from(panel.shadowRoot?.querySelectorAll("nav button") ?? []).find(
+      (button) => button.textContent?.trim() === "Analytics"
+    ) as HTMLButtonElement | undefined;
+    analyticsButton?.click();
+
+    await panel.updateComplete;
+    await Promise.resolve();
+    await panel.updateComplete;
+
+    expect(analyticsRequests).toHaveLength(1);
+
+    analyticsRequests[0].deferred.resolve(analyticsSnapshotFixture("profile-1", 10));
+    await settlePanel(panel);
+
+    const analyticsView = panel.shadowRoot?.querySelector("task-manager-analytics-view") as HTMLElement | null;
+    const includeToggle = analyticsView?.shadowRoot?.querySelector(
+      "[data-include-deleted-history-toggle]"
+    ) as HTMLInputElement | null;
+
+    if (!includeToggle) {
+      throw new Error("Expected include-deleted-history toggle");
+    }
+
+    includeToggle.checked = false;
+    includeToggle.dispatchEvent(new Event("change"));
+    await panel.updateComplete;
+    await Promise.resolve();
+    await panel.updateComplete;
+
+    includeToggle.checked = true;
+    includeToggle.dispatchEvent(new Event("change"));
+    await panel.updateComplete;
+    await Promise.resolve();
+    await panel.updateComplete;
+
+    expect(analyticsRequests.map((request) => request.includeDeleted)).toEqual([true, false, true]);
+
+    analyticsRequests[2].deferred.resolve(analyticsSnapshotFixture("profile-1", 22));
+    await settlePanel(panel);
+
+    const panelAfterLatest = panel as unknown as {
+      analyticsLoading: boolean;
+      analyticsSnapshots: Record<string, { on_time_count: number }>;
+    };
+
+    expect(panelAfterLatest.analyticsSnapshots["profile-1"]?.on_time_count).toBe(22);
+
+    analyticsRequests[1].deferred.resolve(analyticsSnapshotFixture("profile-1", 11));
+    await settlePanel(panel);
+
+    const finalPanelState = panel as unknown as {
+      analyticsLoading: boolean;
+      analyticsSnapshots: Record<string, { on_time_count: number }>;
+    };
+
+    expect(finalPanelState.analyticsLoading).toBe(false);
+    expect(finalPanelState.analyticsSnapshots["profile-1"]?.on_time_count).toBe(22);
+  });
+
+  it("opens reset baseline dialog and sends confirm_text after typing delete", async () => {
+    const requestedMessages: WsMessage[] = [];
+
+    vi.spyOn(window, "setInterval").mockReturnValue(1);
+    vi.spyOn(window, "clearInterval").mockImplementation(() => undefined);
+
+    const hass = createHass(async (message) => {
+      requestedMessages.push(message);
+      const type = String(message.type);
+
+      switch (type) {
+        case "ha_task_manager/current_profile":
+          return {
+            ha_user_id: "ha-user-1",
+            mapped: true,
+            profile_id: "profile-1",
+            display_name: "Alex",
+          };
+        case "ha_task_manager/profiles":
+          return [
+            {
+              id: "profile-1",
+              display_name: "Alex",
+              avatar_url: "",
+              created_at: "2026-05-10T00:00:00+00:00",
+            },
+          ];
+        case "ha_task_manager/tasks":
+          return [taskFixture()];
+        case "ha_task_manager/due_instances":
+          return [];
+        case "ha_task_manager/pending_confirmations":
+          return [];
+        case "ha_task_manager/profile_mappings":
+          return [];
+        case "ha_task_manager/ha_users":
+          return [];
+        case "ha_task_manager/unmapped_nfc_tags":
+          return [];
+        case "ha_task_manager/analytics":
+          return {
+            profile_id: "profile-1",
+            computed_at: "2026-05-14T09:00:00+00:00",
+            daily_completions: [],
+            on_time_count: 0,
+            late_count: 0,
+            missed_count: 0,
+            current_streak: 0,
+            longest_streak: 0,
+          };
+        case "ha_task_manager/reset_analytics_baseline":
+          return {
+            operation_id: "reset-op-1",
+            new_baseline_at: "2026-05-14T09:10:00+00:00",
+            undo_expires_at: "2099-01-01T00:00:00+00:00",
+          };
+        default:
+          throw new Error(`Unexpected websocket call: ${type}`);
+      }
+    }, { isAdmin: true });
+
+    const panel = document.createElement("ha-task-manager-panel") as HaTaskManagerPanel;
+    panel.hass = hass;
+    document.body.append(panel);
+
+    await settlePanel(panel);
+
+    const analyticsButton = Array.from(panel.shadowRoot?.querySelectorAll("nav button") ?? []).find(
+      (button) => button.textContent?.trim() === "Analytics"
+    ) as HTMLButtonElement | undefined;
+    analyticsButton?.click();
+    await settlePanel(panel);
+
+    const analyticsView = panel.shadowRoot?.querySelector("task-manager-analytics-view") as HTMLElement | null;
+    const resetButton = analyticsView?.shadowRoot?.querySelector(
+      "[data-reset-analytics-baseline]"
+    ) as HTMLButtonElement | null;
+    resetButton?.click();
+    await settlePanel(panel);
+
+    expect(
+      requestedMessages.filter((message) => String(message.type) === "ha_task_manager/reset_analytics_baseline")
+    ).toHaveLength(0);
+
+    const dialog = panel.shadowRoot?.querySelector("task-manager-destructive-confirm-dialog") as
+      | ({ open?: boolean } & HTMLElement)
+      | null;
+    expect(dialog?.open).toBe(true);
+
+    const confirmInput = dialog?.shadowRoot?.querySelector('[data-action="confirm-input"]') as
+      | HTMLInputElement
+      | null;
+    const confirmButton = dialog?.shadowRoot?.querySelector('[data-action="confirm"]') as
+      | HTMLButtonElement
+      | null;
+    if (!confirmInput || !confirmButton) {
+      throw new Error("Expected destructive confirmation controls");
+    }
+
+    confirmInput.value = "delete";
+    confirmInput.dispatchEvent(new Event("input"));
+    await settlePanel(panel);
+    confirmButton.click();
+    await settlePanel(panel);
+
+    const resetRequests = requestedMessages.filter(
+      (message) => String(message.type) === "ha_task_manager/reset_analytics_baseline"
+    );
+
+    expect(resetRequests).toHaveLength(1);
+    expect(resetRequests[0]).toMatchObject({
+      confirm_text: "delete",
+    });
+  });
+
+  it("allows mapped non-admin users to reset analytics baseline", async () => {
+    const requestedMessages: WsMessage[] = [];
+
+    vi.spyOn(window, "setInterval").mockReturnValue(1);
+    vi.spyOn(window, "clearInterval").mockImplementation(() => undefined);
+
+    const hass = createHass(async (message) => {
+      requestedMessages.push(message);
+      const type = String(message.type);
+
+      switch (type) {
+        case "ha_task_manager/current_profile":
+          return {
+            ha_user_id: "ha-user-1",
+            mapped: true,
+            profile_id: "profile-1",
+            display_name: "Alex",
+          };
+        case "ha_task_manager/profiles":
+          return [
+            {
+              id: "profile-1",
+              display_name: "Alex",
+              avatar_url: "",
+              created_at: "2026-05-10T00:00:00+00:00",
+            },
+          ];
+        case "ha_task_manager/tasks":
+          return [taskFixture()];
+        case "ha_task_manager/due_instances":
+          return [];
+        case "ha_task_manager/pending_confirmations":
+          return [];
+        case "ha_task_manager/analytics":
+          return analyticsSnapshotFixture("profile-1", 0);
+        case "ha_task_manager/reset_analytics_baseline":
+          return {
+            operation_id: "reset-op-user-1",
+            new_baseline_at: "2026-05-14T09:10:00+00:00",
+            undo_expires_at: "2099-01-01T00:00:00+00:00",
+          };
+        default:
+          throw new Error(`Unexpected websocket call: ${type}`);
+      }
+    });
+
+    const panel = document.createElement("ha-task-manager-panel") as HaTaskManagerPanel;
+    panel.hass = hass;
+    document.body.append(panel);
+
+    await settlePanel(panel);
+
+    const analyticsButton = Array.from(panel.shadowRoot?.querySelectorAll("nav button") ?? []).find(
+      (button) => button.textContent?.trim() === "Analytics"
+    ) as HTMLButtonElement | undefined;
+    analyticsButton?.click();
+    await settlePanel(panel);
+
+    const analyticsView = panel.shadowRoot?.querySelector("task-manager-analytics-view") as HTMLElement | null;
+    const resetButton = analyticsView?.shadowRoot?.querySelector(
+      "[data-reset-analytics-baseline]"
+    ) as HTMLButtonElement | null;
+    resetButton?.click();
+    await settlePanel(panel);
+
+    const dialog = panel.shadowRoot?.querySelector("task-manager-destructive-confirm-dialog") as
+      | ({ open?: boolean } & HTMLElement)
+      | null;
+    expect(dialog?.open).toBe(true);
+
+    const confirmInput = dialog?.shadowRoot?.querySelector('[data-action="confirm-input"]') as
+      | HTMLInputElement
+      | null;
+    const confirmButton = dialog?.shadowRoot?.querySelector('[data-action="confirm"]') as
+      | HTMLButtonElement
+      | null;
+    if (!confirmInput || !confirmButton) {
+      throw new Error("Expected destructive confirmation controls");
+    }
+
+    confirmInput.value = "delete";
+    confirmInput.dispatchEvent(new Event("input"));
+    await settlePanel(panel);
+    confirmButton.click();
+    await settlePanel(panel);
+
+    const resetRequests = requestedMessages.filter(
+      (message) => String(message.type) === "ha_task_manager/reset_analytics_baseline"
+    );
+
+    expect(resetRequests).toHaveLength(1);
+    expect(resetRequests[0]).toMatchObject({
+      confirm_text: "delete",
+    });
+  });
+
+  it("routes undo action button to matching websocket undo command", async () => {
+    const requestedMessages: WsMessage[] = [];
+
+    vi.spyOn(window, "setInterval").mockReturnValue(1);
+    vi.spyOn(window, "clearInterval").mockImplementation(() => undefined);
+
+    const hass = createHass(async (message) => {
+      requestedMessages.push(message);
+      const type = String(message.type);
+
+      switch (type) {
+        case "ha_task_manager/current_profile":
+          return {
+            ha_user_id: "ha-user-1",
+            mapped: true,
+            profile_id: "profile-1",
+            display_name: "Alex",
+          };
+        case "ha_task_manager/profiles":
+          return [
+            {
+              id: "profile-1",
+              display_name: "Alex",
+              avatar_url: "",
+              created_at: "2026-05-10T00:00:00+00:00",
+            },
+          ];
+        case "ha_task_manager/tasks":
+          return [taskFixture()];
+        case "ha_task_manager/due_instances":
+          return [];
+        case "ha_task_manager/pending_confirmations":
+          return [];
+        case "ha_task_manager/profile_mappings":
+          return [];
+        case "ha_task_manager/ha_users":
+          return [];
+        case "ha_task_manager/unmapped_nfc_tags":
+          return [];
+        case "ha_task_manager/analytics":
+          return {
+            profile_id: "profile-1",
+            computed_at: "2026-05-14T09:00:00+00:00",
+            daily_completions: [],
+            on_time_count: 0,
+            late_count: 0,
+            missed_count: 0,
+            current_streak: 0,
+            longest_streak: 0,
+          };
+        case "ha_task_manager/delete_task_definition":
+          return {
+            operation_id: "delete-op-1",
+            task_id: String(message.task_id),
+            undo_expires_at: "2099-01-01T00:00:00+00:00",
+          };
+        case "ha_task_manager/undo_delete_task_definition":
+          return {
+            operation_id: String(message.operation_id),
+            status: "undone",
+            task: taskFixture(),
+          };
+        case "ha_task_manager/reset_analytics_baseline":
+          return {
+            operation_id: "reset-op-1",
+            new_baseline_at: "2026-05-14T09:10:00+00:00",
+            undo_expires_at: "2099-01-01T00:00:00+00:00",
+          };
+        case "ha_task_manager/undo_analytics_baseline_reset":
+          return {
+            operation_id: String(message.operation_id),
+            restored_baseline_at: "2026-05-13T00:00:00+00:00",
+            status: "undone",
+          };
+        default:
+          throw new Error(`Unexpected websocket call: ${type}`);
+      }
+    }, { isAdmin: true });
+
+    const panel = document.createElement("ha-task-manager-panel") as HaTaskManagerPanel;
+    panel.hass = hass;
+    document.body.append(panel);
+
+    await settlePanel(panel);
+
+    const manageTasksButton = Array.from(panel.shadowRoot?.querySelectorAll("nav button") ?? []).find(
+      (button) => button.textContent?.trim() === "Manage Tasks"
+    ) as HTMLButtonElement | undefined;
+    manageTasksButton?.click();
+    await settlePanel(panel);
+
+    const triggerDialogConfirm = async (): Promise<void> => {
+      const dialog = panel.shadowRoot?.querySelector("task-manager-destructive-confirm-dialog") as
+        | HTMLElement
+        | null;
+      const confirmInput = dialog?.shadowRoot?.querySelector('[data-action="confirm-input"]') as
+        | HTMLInputElement
+        | null;
+      const confirmButton = dialog?.shadowRoot?.querySelector('[data-action="confirm"]') as
+        | HTMLButtonElement
+        | null;
+
+      if (!confirmInput || !confirmButton) {
+        throw new Error("Expected destructive confirmation controls");
+      }
+
+      confirmInput.value = "delete";
+      confirmInput.dispatchEvent(new Event("input"));
+      await settlePanel(panel);
+      confirmButton.click();
+      await settlePanel(panel);
+    };
+
+    const taskBuilderView = panel.shadowRoot?.querySelector("task-manager-task-builder-view") as HTMLElement | null;
+    taskBuilderView?.dispatchEvent(
+      new CustomEvent("delete-task-definition-request", {
+        detail: { taskId: "task-1" },
+        bubbles: true,
+        composed: true,
+      })
+    );
+    await settlePanel(panel);
+    await triggerDialogConfirm();
+
+    const undoButtonAfterDelete = panel.shadowRoot?.querySelector(
+      "[data-destructive-undo-button]"
+    ) as HTMLButtonElement | null;
+    undoButtonAfterDelete?.click();
+    await settlePanel(panel);
+
+    const analyticsButton = Array.from(panel.shadowRoot?.querySelectorAll("nav button") ?? []).find(
+      (button) => button.textContent?.trim() === "Analytics"
+    ) as HTMLButtonElement | undefined;
+    analyticsButton?.click();
+    await settlePanel(panel);
+
+    const analyticsView = panel.shadowRoot?.querySelector("task-manager-analytics-view") as HTMLElement | null;
+    const resetButton = analyticsView?.shadowRoot?.querySelector(
+      "[data-reset-analytics-baseline]"
+    ) as HTMLButtonElement | null;
+    resetButton?.click();
+    await settlePanel(panel);
+    await triggerDialogConfirm();
+
+    const undoButtonAfterReset = panel.shadowRoot?.querySelector(
+      "[data-destructive-undo-button]"
+    ) as HTMLButtonElement | null;
+    undoButtonAfterReset?.click();
+    await settlePanel(panel);
+
+    expect(
+      requestedMessages.filter((message) => String(message.type) === "ha_task_manager/undo_delete_task_definition")
+    ).toHaveLength(1);
+    expect(
+      requestedMessages.filter(
+        (message) => String(message.type) === "ha_task_manager/undo_analytics_baseline_reset"
+      )
+    ).toHaveLength(1);
+  });
+
+  it("serializes overlapping undo clicks so only one undo request dispatches while in flight", async () => {
+    const requestedMessages: WsMessage[] = [];
+    const undoResetRequest = createDeferred<{
+      operation_id: string;
+      restored_baseline_at: string;
+      status: string;
+    }>();
+
+    vi.spyOn(window, "setInterval").mockReturnValue(1);
+    vi.spyOn(window, "clearInterval").mockImplementation(() => undefined);
+
+    const hass = createHass(async (message) => {
+      requestedMessages.push(message);
+      const type = String(message.type);
+
+      switch (type) {
+        case "ha_task_manager/current_profile":
+          return {
+            ha_user_id: "ha-user-1",
+            mapped: true,
+            profile_id: "profile-1",
+            display_name: "Alex",
+          };
+        case "ha_task_manager/profiles":
+          return [
+            {
+              id: "profile-1",
+              display_name: "Alex",
+              avatar_url: "",
+              created_at: "2026-05-10T00:00:00+00:00",
+            },
+          ];
+        case "ha_task_manager/tasks":
+          return [taskFixture()];
+        case "ha_task_manager/due_instances":
+          return [];
+        case "ha_task_manager/pending_confirmations":
+          return [];
+        case "ha_task_manager/profile_mappings":
+          return [];
+        case "ha_task_manager/ha_users":
+          return [];
+        case "ha_task_manager/unmapped_nfc_tags":
+          return [];
+        case "ha_task_manager/analytics":
+          return analyticsSnapshotFixture("profile-1", 0);
+        case "ha_task_manager/delete_task_definition":
+          return {
+            operation_id: "delete-op-1",
+            task_id: String(message.task_id),
+            undo_expires_at: "2099-01-01T00:00:00+00:00",
+          };
+        case "ha_task_manager/reset_analytics_baseline":
+          return {
+            operation_id: "reset-op-1",
+            new_baseline_at: "2026-05-14T09:10:00+00:00",
+            undo_expires_at: "2099-01-01T00:00:00+00:00",
+          };
+        case "ha_task_manager/undo_analytics_baseline_reset":
+          return undoResetRequest.promise;
+        case "ha_task_manager/undo_delete_task_definition":
+          return {
+            operation_id: String(message.operation_id),
+            status: "undone",
+            task: taskFixture(),
+          };
+        default:
+          throw new Error(`Unexpected websocket call: ${type}`);
+      }
+    }, { isAdmin: true });
+
+    const panel = document.createElement("ha-task-manager-panel") as HaTaskManagerPanel;
+    panel.hass = hass;
+    document.body.append(panel);
+
+    await settlePanel(panel);
+
+    const manageTasksButton = Array.from(panel.shadowRoot?.querySelectorAll("nav button") ?? []).find(
+      (button) => button.textContent?.trim() === "Manage Tasks"
+    ) as HTMLButtonElement | undefined;
+    manageTasksButton?.click();
+    await settlePanel(panel);
+
+    const triggerDialogConfirm = async (): Promise<void> => {
+      const dialog = panel.shadowRoot?.querySelector("task-manager-destructive-confirm-dialog") as
+        | HTMLElement
+        | null;
+      const confirmInput = dialog?.shadowRoot?.querySelector('[data-action="confirm-input"]') as
+        | HTMLInputElement
+        | null;
+      const confirmButton = dialog?.shadowRoot?.querySelector('[data-action="confirm"]') as
+        | HTMLButtonElement
+        | null;
+
+      if (!confirmInput || !confirmButton) {
+        throw new Error("Expected destructive confirmation controls");
+      }
+
+      confirmInput.value = "delete";
+      confirmInput.dispatchEvent(new Event("input"));
+      await settlePanel(panel);
+      confirmButton.click();
+      await settlePanel(panel);
+    };
+
+    const taskBuilderView = panel.shadowRoot?.querySelector("task-manager-task-builder-view") as HTMLElement | null;
+    taskBuilderView?.dispatchEvent(
+      new CustomEvent("delete-task-definition-request", {
+        detail: { taskId: "task-1" },
+        bubbles: true,
+        composed: true,
+      })
+    );
+    await settlePanel(panel);
+    await triggerDialogConfirm();
+
+    const analyticsButton = Array.from(panel.shadowRoot?.querySelectorAll("nav button") ?? []).find(
+      (button) => button.textContent?.trim() === "Analytics"
+    ) as HTMLButtonElement | undefined;
+    analyticsButton?.click();
+    await settlePanel(panel);
+
+    const analyticsView = panel.shadowRoot?.querySelector("task-manager-analytics-view") as HTMLElement | null;
+    const resetButton = analyticsView?.shadowRoot?.querySelector(
+      "[data-reset-analytics-baseline]"
+    ) as HTMLButtonElement | null;
+    resetButton?.click();
+    await settlePanel(panel);
+    await triggerDialogConfirm();
+
+    const undoButtons = Array.from(
+      panel.shadowRoot?.querySelectorAll("[data-destructive-undo-button]") ?? []
+    ) as HTMLButtonElement[];
+
+    expect(undoButtons).toHaveLength(2);
+
+    undoButtons[0].click();
+    await panel.updateComplete;
+    await Promise.resolve();
+    await panel.updateComplete;
+
+    expect(undoButtons[1].disabled).toBe(true);
+
+    undoButtons[1].click();
+    await panel.updateComplete;
+    await Promise.resolve();
+    await panel.updateComplete;
+
+    expect(
+      requestedMessages.filter(
+        (message) => String(message.type) === "ha_task_manager/undo_analytics_baseline_reset"
+      )
+    ).toHaveLength(1);
+    expect(
+      requestedMessages.filter((message) => String(message.type) === "ha_task_manager/undo_delete_task_definition")
+    ).toHaveLength(0);
+
+    undoResetRequest.resolve({
+      operation_id: "reset-op-1",
+      restored_baseline_at: "2026-05-13T00:00:00+00:00",
+      status: "undone",
+    });
+    await settlePanel(panel);
+  });
+
   it("loads custom-range snapshots and passes due instances into schedule snapshot view", async () => {
     const requestedMessages: WsMessage[] = [];
 
@@ -2381,6 +3420,437 @@ describe("ha-task-manager-panel", () => {
     expect(finalBuilderView?.tasks?.map((task) => task.title)).toEqual(["Jordan Task"]);
   });
 
+  it("ignores a stale in-flight delete confirmation result after the hass user context changes", async () => {
+    const deleteRequest = createDeferred<{
+      operation_id: string;
+      task_id: string;
+      undo_expires_at: string;
+    }>();
+
+    vi.spyOn(window, "setInterval").mockReturnValue(1);
+    vi.spyOn(window, "clearInterval").mockImplementation(() => undefined);
+
+    const createTaskForUser = (userId: "ha-user-1" | "ha-user-2"): TaskDefinition => ({
+      ...taskFixture(),
+      id: userId === "ha-user-1" ? "task-1" : "task-2",
+      title: userId === "ha-user-1" ? "Alex Task" : "Jordan Task",
+      assigned_profile_id: userId === "ha-user-1" ? "profile-1" : "profile-2",
+    });
+
+    const createAdminHass = (userId: "ha-user-1" | "ha-user-2") =>
+      createHass(async (message) => {
+        const type = String(message.type);
+
+        switch (type) {
+          case "ha_task_manager/current_profile":
+            return {
+              ha_user_id: userId,
+              mapped: true,
+              profile_id: userId === "ha-user-1" ? "profile-1" : "profile-2",
+              display_name: userId === "ha-user-1" ? "Alex" : "Jordan",
+            };
+          case "ha_task_manager/profiles":
+            return [
+              {
+                id: userId === "ha-user-1" ? "profile-1" : "profile-2",
+                display_name: userId === "ha-user-1" ? "Alex Profile" : "Jordan Profile",
+                avatar_url: "",
+                created_at: "2026-05-10T00:00:00+00:00",
+              },
+            ];
+          case "ha_task_manager/tasks":
+            return [createTaskForUser(userId)];
+          case "ha_task_manager/due_instances":
+            return [];
+          case "ha_task_manager/pending_confirmations":
+            return [];
+          case "ha_task_manager/profile_mappings":
+            return [];
+          case "ha_task_manager/ha_users":
+            return [];
+          case "ha_task_manager/unmapped_nfc_tags":
+            return [];
+          case "ha_task_manager/delete_task_definition":
+            if (userId !== "ha-user-1") {
+              throw new Error("Unexpected delete request for refreshed context");
+            }
+            return deleteRequest.promise;
+          default:
+            throw new Error(`Unexpected websocket call: ${type}`);
+        }
+      }, { isAdmin: true, userId });
+
+    const panel = document.createElement("ha-task-manager-panel") as HaTaskManagerPanel;
+    (panel as unknown as { currentView: string }).currentView = "admin";
+    panel.hass = createAdminHass("ha-user-1");
+    document.body.append(panel);
+
+    await settlePanel(panel);
+
+    const taskBuilderView = panel.shadowRoot?.querySelector("task-manager-task-builder-view") as
+      | HTMLElement
+      | null;
+    taskBuilderView?.dispatchEvent(
+      new CustomEvent("delete-task-definition-request", {
+        detail: { taskId: "task-1" },
+        bubbles: true,
+        composed: true,
+      })
+    );
+    await settlePanel(panel);
+
+    const dialog = panel.shadowRoot?.querySelector("task-manager-destructive-confirm-dialog") as
+      | HTMLElement
+      | null;
+    const confirmInput = dialog?.shadowRoot?.querySelector('[data-action="confirm-input"]') as
+      | HTMLInputElement
+      | null;
+    const confirmButton = dialog?.shadowRoot?.querySelector('[data-action="confirm"]') as
+      | HTMLButtonElement
+      | null;
+
+    if (!confirmInput || !confirmButton) {
+      throw new Error("Expected destructive confirmation controls");
+    }
+
+    confirmInput.value = "delete";
+    confirmInput.dispatchEvent(new Event("input"));
+    await settlePanel(panel);
+    confirmButton.click();
+
+    await panel.updateComplete;
+    await Promise.resolve();
+    await panel.updateComplete;
+
+    const pendingState = panel as unknown as { destructiveBusy: boolean };
+    expect(pendingState.destructiveBusy).toBe(true);
+
+    panel.hass = createAdminHass("ha-user-2");
+    await settlePanel(panel);
+
+    const refreshedState = panel as unknown as {
+      destructiveBusy: boolean;
+      destructiveError: string;
+      undoBanners: unknown[];
+      tasks: TaskDefinition[];
+    };
+
+    expect(panel.shadowRoot?.textContent).toContain("Signed in as Jordan");
+    expect(refreshedState.destructiveBusy).toBe(false);
+    expect(refreshedState.destructiveError).toBe("");
+    expect(refreshedState.undoBanners).toEqual([]);
+    expect(refreshedState.tasks.map((task) => task.title)).toEqual(["Jordan Task"]);
+
+    deleteRequest.resolve({
+      operation_id: "delete-op-stale",
+      task_id: "task-1",
+      undo_expires_at: "2099-01-01T00:00:00+00:00",
+    });
+    await settlePanel(panel);
+
+    const finalState = panel as unknown as {
+      destructiveBusy: boolean;
+      destructiveError: string;
+      undoBanners: unknown[];
+      tasks: TaskDefinition[];
+    };
+
+    expect(panel.shadowRoot?.textContent).toContain("Signed in as Jordan");
+    expect(panel.shadowRoot?.textContent).not.toContain("Deleted Alex Task.");
+    expect(finalState.destructiveBusy).toBe(false);
+    expect(finalState.destructiveError).toBe("");
+    expect(finalState.undoBanners).toEqual([]);
+    expect(finalState.tasks.map((task) => task.title)).toEqual(["Jordan Task"]);
+  });
+
+  it("ignores a stale in-flight reset confirmation result after the hass user context changes", async () => {
+    const resetRequest = createDeferred<{
+      operation_id: string;
+      new_baseline_at: string;
+      undo_expires_at: string;
+    }>();
+
+    vi.spyOn(window, "setInterval").mockReturnValue(1);
+    vi.spyOn(window, "clearInterval").mockImplementation(() => undefined);
+
+    const createAdminHass = (userId: "ha-user-1" | "ha-user-2") =>
+      createHass(async (message) => {
+        const type = String(message.type);
+
+        switch (type) {
+          case "ha_task_manager/current_profile":
+            return {
+              ha_user_id: userId,
+              mapped: true,
+              profile_id: userId === "ha-user-1" ? "profile-1" : "profile-2",
+              display_name: userId === "ha-user-1" ? "Alex" : "Jordan",
+            };
+          case "ha_task_manager/profiles":
+            return [
+              {
+                id: userId === "ha-user-1" ? "profile-1" : "profile-2",
+                display_name: userId === "ha-user-1" ? "Alex Profile" : "Jordan Profile",
+                avatar_url: "",
+                created_at: "2026-05-10T00:00:00+00:00",
+              },
+            ];
+          case "ha_task_manager/tasks":
+            return [
+              {
+                ...taskFixture(),
+                id: userId === "ha-user-1" ? "task-1" : "task-2",
+                title: userId === "ha-user-1" ? "Alex Task" : "Jordan Task",
+                assigned_profile_id: userId === "ha-user-1" ? "profile-1" : "profile-2",
+              },
+            ];
+          case "ha_task_manager/due_instances":
+            return [];
+          case "ha_task_manager/pending_confirmations":
+            return [];
+          case "ha_task_manager/profile_mappings":
+            return [];
+          case "ha_task_manager/ha_users":
+            return [];
+          case "ha_task_manager/unmapped_nfc_tags":
+            return [];
+          case "ha_task_manager/analytics":
+            return analyticsSnapshotFixture(
+              userId === "ha-user-1" ? "profile-1" : "profile-2",
+              userId === "ha-user-1" ? 1 : 2
+            );
+          case "ha_task_manager/reset_analytics_baseline":
+            if (userId !== "ha-user-1") {
+              throw new Error("Unexpected reset request for refreshed context");
+            }
+            return resetRequest.promise;
+          default:
+            throw new Error(`Unexpected websocket call: ${type}`);
+        }
+      }, { isAdmin: true, userId });
+
+    const panel = document.createElement("ha-task-manager-panel") as HaTaskManagerPanel;
+    (panel as unknown as { currentView: string }).currentView = "analytics";
+    panel.hass = createAdminHass("ha-user-1");
+    document.body.append(panel);
+
+    await settlePanel(panel);
+
+    const analyticsView = panel.shadowRoot?.querySelector("task-manager-analytics-view") as HTMLElement | null;
+    const resetButton = analyticsView?.shadowRoot?.querySelector(
+      "[data-reset-analytics-baseline]"
+    ) as HTMLButtonElement | null;
+    resetButton?.click();
+    await settlePanel(panel);
+
+    const dialog = panel.shadowRoot?.querySelector("task-manager-destructive-confirm-dialog") as
+      | HTMLElement
+      | null;
+    const confirmInput = dialog?.shadowRoot?.querySelector('[data-action="confirm-input"]') as
+      | HTMLInputElement
+      | null;
+    const confirmButton = dialog?.shadowRoot?.querySelector('[data-action="confirm"]') as
+      | HTMLButtonElement
+      | null;
+
+    if (!confirmInput || !confirmButton) {
+      throw new Error("Expected destructive confirmation controls");
+    }
+
+    confirmInput.value = "delete";
+    confirmInput.dispatchEvent(new Event("input"));
+    await settlePanel(panel);
+    confirmButton.click();
+
+    await panel.updateComplete;
+    await Promise.resolve();
+    await panel.updateComplete;
+
+    const pendingState = panel as unknown as { destructiveBusy: boolean };
+    expect(pendingState.destructiveBusy).toBe(true);
+
+    panel.hass = createAdminHass("ha-user-2");
+    await settlePanel(panel);
+
+    const refreshedState = panel as unknown as {
+      destructiveBusy: boolean;
+      destructiveError: string;
+      undoBanners: unknown[];
+    };
+
+    expect(panel.shadowRoot?.textContent).toContain("Signed in as Jordan");
+    expect(refreshedState.destructiveBusy).toBe(false);
+    expect(refreshedState.destructiveError).toBe("");
+    expect(refreshedState.undoBanners).toEqual([]);
+
+    resetRequest.resolve({
+      operation_id: "reset-op-stale",
+      new_baseline_at: "2026-05-14T09:10:00+00:00",
+      undo_expires_at: "2099-01-01T00:00:00+00:00",
+    });
+    await settlePanel(panel);
+
+    const finalState = panel as unknown as {
+      destructiveBusy: boolean;
+      destructiveError: string;
+      undoBanners: unknown[];
+    };
+
+    expect(panel.shadowRoot?.textContent).toContain("Signed in as Jordan");
+    expect(finalState.destructiveBusy).toBe(false);
+    expect(finalState.destructiveError).toBe("");
+    expect(finalState.undoBanners).toEqual([]);
+  });
+
+  it("ignores a stale in-flight undo response after the hass user context changes", async () => {
+    const undoDeleteRequest = createDeferred<{
+      operation_id: string;
+      status: string;
+      task: TaskDefinition;
+    }>();
+
+    vi.spyOn(window, "setInterval").mockReturnValue(1);
+    vi.spyOn(window, "clearInterval").mockImplementation(() => undefined);
+
+    const createTaskForUser = (userId: "ha-user-1" | "ha-user-2"): TaskDefinition => ({
+      ...taskFixture(),
+      id: userId === "ha-user-1" ? "task-1" : "task-2",
+      title: userId === "ha-user-1" ? "Alex Task" : "Jordan Task",
+      assigned_profile_id: userId === "ha-user-1" ? "profile-1" : "profile-2",
+    });
+
+    const createAdminHass = (userId: "ha-user-1" | "ha-user-2") =>
+      createHass(async (message) => {
+        const type = String(message.type);
+
+        switch (type) {
+          case "ha_task_manager/current_profile":
+            return {
+              ha_user_id: userId,
+              mapped: true,
+              profile_id: userId === "ha-user-1" ? "profile-1" : "profile-2",
+              display_name: userId === "ha-user-1" ? "Alex" : "Jordan",
+            };
+          case "ha_task_manager/profiles":
+            return [
+              {
+                id: userId === "ha-user-1" ? "profile-1" : "profile-2",
+                display_name: userId === "ha-user-1" ? "Alex Profile" : "Jordan Profile",
+                avatar_url: "",
+                created_at: "2026-05-10T00:00:00+00:00",
+              },
+            ];
+          case "ha_task_manager/tasks":
+            return [createTaskForUser(userId)];
+          case "ha_task_manager/due_instances":
+            return [];
+          case "ha_task_manager/pending_confirmations":
+            return [];
+          case "ha_task_manager/profile_mappings":
+            return [];
+          case "ha_task_manager/ha_users":
+            return [];
+          case "ha_task_manager/unmapped_nfc_tags":
+            return [];
+          case "ha_task_manager/delete_task_definition":
+            return {
+              operation_id: "delete-op-1",
+              task_id: String(message.task_id),
+              undo_expires_at: "2099-01-01T00:00:00+00:00",
+            };
+          case "ha_task_manager/undo_delete_task_definition":
+            if (userId !== "ha-user-1") {
+              throw new Error("Unexpected undo request for refreshed context");
+            }
+            return undoDeleteRequest.promise;
+          default:
+            throw new Error(`Unexpected websocket call: ${type}`);
+        }
+      }, { isAdmin: true, userId });
+
+    const panel = document.createElement("ha-task-manager-panel") as HaTaskManagerPanel;
+    (panel as unknown as { currentView: string }).currentView = "admin";
+    panel.hass = createAdminHass("ha-user-1");
+    document.body.append(panel);
+
+    await settlePanel(panel);
+
+    const taskBuilderView = panel.shadowRoot?.querySelector("task-manager-task-builder-view") as
+      | HTMLElement
+      | null;
+    taskBuilderView?.dispatchEvent(
+      new CustomEvent("delete-task-definition-request", {
+        detail: { taskId: "task-1" },
+        bubbles: true,
+        composed: true,
+      })
+    );
+    await settlePanel(panel);
+
+    const dialog = panel.shadowRoot?.querySelector("task-manager-destructive-confirm-dialog") as
+      | HTMLElement
+      | null;
+    const confirmInput = dialog?.shadowRoot?.querySelector('[data-action="confirm-input"]') as
+      | HTMLInputElement
+      | null;
+    const confirmButton = dialog?.shadowRoot?.querySelector('[data-action="confirm"]') as
+      | HTMLButtonElement
+      | null;
+
+    if (!confirmInput || !confirmButton) {
+      throw new Error("Expected destructive confirmation controls");
+    }
+
+    confirmInput.value = "delete";
+    confirmInput.dispatchEvent(new Event("input"));
+    await settlePanel(panel);
+    confirmButton.click();
+    await settlePanel(panel);
+
+    const undoButton = panel.shadowRoot?.querySelector(
+      "[data-destructive-undo-button]"
+    ) as HTMLButtonElement | null;
+    undoButton?.click();
+
+    await panel.updateComplete;
+    await Promise.resolve();
+    await panel.updateComplete;
+
+    const pendingState = panel as unknown as { undoBusyOperationId: string };
+    expect(pendingState.undoBusyOperationId).toBe("delete-op-1");
+
+    panel.hass = createAdminHass("ha-user-2");
+    await settlePanel(panel);
+
+    const refreshedState = panel as unknown as {
+      undoBusyOperationId: string;
+      undoErrorsByOperationId: Record<string, string>;
+      undoBanners: unknown[];
+    };
+
+    expect(panel.shadowRoot?.textContent).toContain("Signed in as Jordan");
+    expect(refreshedState.undoBusyOperationId).toBe("");
+    expect(refreshedState.undoErrorsByOperationId).toEqual({});
+    expect(refreshedState.undoBanners).toEqual([]);
+
+    undoDeleteRequest.resolve({
+      operation_id: "delete-op-1",
+      status: "undone",
+      task: taskFixture(),
+    });
+    await settlePanel(panel);
+
+    const finalState = panel as unknown as {
+      undoBusyOperationId: string;
+      undoErrorsByOperationId: Record<string, string>;
+      undoBanners: unknown[];
+    };
+
+    expect(panel.shadowRoot?.textContent).toContain("Signed in as Jordan");
+    expect(finalState.undoBusyOperationId).toBe("");
+    expect(finalState.undoErrorsByOperationId).toEqual({});
+    expect(finalState.undoBanners).toEqual([]);
+  });
+
   it("ignores direct save-task events after admin access is revoked", async () => {
     const requestedTypes: string[] = [];
     vi.spyOn(window, "setInterval").mockReturnValue(1);
@@ -2460,7 +3930,7 @@ describe("ha-task-manager-panel", () => {
 
     await settlePanel(panel);
 
-    expect(panel.shadowRoot?.querySelector("task-manager-task-builder-view")).toBeNull();
+    expect(panel.shadowRoot?.querySelector("task-manager-task-builder-view")).not.toBeNull();
     expect(requestedTypes).not.toContain("ha_task_manager/save_task");
   });
 });

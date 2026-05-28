@@ -5,6 +5,7 @@ import {
   archiveTask,
   completeDueInstance,
   confirmCompletion,
+  deleteTaskDefinition,
   fetchAnalytics,
   fetchCurrentProfile,
   fetchDueInstances,
@@ -16,10 +17,14 @@ import {
   fetchUnmappedNfcTags,
   importHaUser,
   linkNfcTag,
+  resetAnalyticsBaseline,
   restoreTask,
   saveTask,
+  undoAnalyticsBaselineReset,
+  undoDeleteTaskDefinition,
 } from "./api/client";
 import "./components/completion-dialog";
+import "./components/destructive-confirm-dialog";
 import "./components/nfc-confirm-dialog";
 import "./views/analytics-view";
 import "./views/household-board-view";
@@ -39,6 +44,7 @@ import type {
   HouseholdProfile,
   NfcDiscoveryEntry,
   ProfileAnalyticsSnapshot,
+  ResetAnalyticsBaselineResult,
   SnapshotGroup,
   TaskDefinition,
   TaskDueInstance,
@@ -63,6 +69,7 @@ interface NavigationTab {
 
 const SETUP_DISCOVERY_WATCH_INTERVAL_MS = 1500;
 const ISO_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+const MAX_RECENT_UNDO_ACTIONS = 5;
 
 const NAVIGATION_TABS: NavigationTab[] = [
   {
@@ -98,6 +105,29 @@ interface ManualCompletionDialogState {
   taskTitle: string;
 }
 
+type DestructiveOperationMode = "delete-task-definition" | "reset-analytics-baseline";
+
+interface DeleteTaskDefinitionDialogState {
+  mode: "delete-task-definition";
+  taskId: string;
+  taskTitle: string;
+}
+
+interface ResetAnalyticsBaselineDialogState {
+  mode: "reset-analytics-baseline";
+}
+
+type DestructiveDialogState =
+  | DeleteTaskDefinitionDialogState
+  | ResetAnalyticsBaselineDialogState;
+
+interface UndoBannerState {
+  mode: DestructiveOperationMode;
+  operationId: string;
+  undoExpiresAt: string;
+  summary: string;
+}
+
 function todayIso(): string {
   const now = new Date();
   const year = now.getFullYear();
@@ -120,6 +150,22 @@ function errorMessage(error: unknown): string {
     return error.message;
   }
   return String(error);
+}
+
+function formatTimestamp(value: string): string {
+  return new Intl.DateTimeFormat(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(new Date(value));
+}
+
+function formatRemainingSeconds(totalSeconds: number): string {
+  const clampedTotalSeconds = Math.max(0, totalSeconds);
+  const minutes = Math.floor(clampedTotalSeconds / 60);
+  const seconds = clampedTotalSeconds % 60;
+  return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
 }
 
 function upsertTask(tasks: TaskDefinition[], savedTask: TaskDefinition, requestedTaskId: string): TaskDefinition[] {
@@ -161,6 +207,8 @@ export class HaTaskManagerPanel extends LitElement {
   @state() private analyticsLoading = false;
 
   @state() private panelError = "";
+
+  @state() private includeDeletedTaskHistory = true;
 
   @state() private currentProfile: CurrentUserProfile | null = null;
 
@@ -218,9 +266,25 @@ export class HaTaskManagerPanel extends LitElement {
 
   @state() private snapshotError = "";
 
+  @state() private destructiveDialog: DestructiveDialogState | null = null;
+
+  @state() private destructiveBusy = false;
+
+  @state() private destructiveError = "";
+
+  @state() private undoBanners: UndoBannerState[] = [];
+
+  @state() private undoBusyOperationId = "";
+
+  @state() private undoErrorsByOperationId: Record<string, string> = {};
+
+  @state() private undoCountdownNow = Date.now();
+
   private pendingPollHandle: number | null = null;
 
   private setupWatchPollHandle: number | null = null;
+
+  private undoCountdownHandle: number | null = null;
 
   private hasLoadedInitialData = false;
 
@@ -236,7 +300,11 @@ export class HaTaskManagerPanel extends LitElement {
 
   private taskSaveRequestId = 0;
 
+  private destructiveMutationRequestId = 0;
+
   private snapshotLoadRequestId = 0;
+
+  private analyticsLoadRequestId = 0;
 
   private setupWatchSessionId = 0;
 
@@ -380,6 +448,55 @@ export class HaTaskManagerPanel extends LitElement {
       font-weight: 600;
     }
 
+    .undo-banner {
+      margin-top: 12px;
+      display: grid;
+      gap: 10px;
+      padding: 14px 16px;
+      border-radius: 18px;
+      background: rgba(62, 138, 87, 0.12);
+      border: 1px solid rgba(47, 107, 71, 0.2);
+      color: #244b2f;
+    }
+
+    .undo-banner h3 {
+      margin: 0;
+      font-size: 1rem;
+    }
+
+    .undo-meta {
+      margin: 0;
+      color: #355b40;
+      font-size: 0.92rem;
+    }
+
+    .undo-actions {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    .undo-actions button {
+      border-radius: 999px;
+      border: none;
+      background: #2f6b47;
+      color: #f8faf6;
+      font-weight: 700;
+      padding: 9px 14px;
+    }
+
+    .undo-actions button:disabled {
+      cursor: not-allowed;
+      opacity: 0.5;
+    }
+
+    .undo-error {
+      margin: 0;
+      color: #8d3526;
+      font-weight: 600;
+    }
+
     section {
       padding: 28px;
       border: 1px solid rgba(46, 78, 46, 0.12);
@@ -474,21 +591,22 @@ export class HaTaskManagerPanel extends LitElement {
   protected updated(changedProperties: Map<string, unknown>): void {
     if (changedProperties.has("hass") && this.hass) {
       this.stopSetupWatch();
+      this.stopUndoCountdown();
       const currentUserContextKey = this.currentUserContextKey;
       if (!this.hasLoadedInitialData || this.lastLoadedUserContextKey !== currentUserContextKey) {
         this.invalidateAdminMutations();
         this.hasLoadedInitialData = true;
         this.lastLoadedUserContextKey = currentUserContextKey;
         this.hasLoadedSetupData = false;
-        this.setupLoading = this.activeView === "setup" || this.activeView === "admin";
+        this.setupLoading = this.activeView === "setup" || (this.activeView === "admin" && this.canAccessAdminViews);
         this.profileMappings = [];
         this.haUsers = [];
         this.unmappedTags = [];
         void this.loadCoreData();
-        if (this.activeView === "setup" || this.activeView === "admin") {
+        if (this.activeView === "setup" || (this.activeView === "admin" && this.canAccessAdminViews)) {
           void this.loadSetupData();
         }
-        if (this.activeView === "admin") {
+        if (this.activeView === "admin" && this.canAccessAdminViews) {
           void this.loadScheduleSnapshot();
         }
         this.startPendingPolling();
@@ -504,11 +622,14 @@ export class HaTaskManagerPanel extends LitElement {
         void this.loadAnalytics();
       }
 
-      if ((this.activeView === "setup" || this.activeView === "admin") && !this.hasLoadedSetupData) {
+      if (
+        (this.activeView === "setup" || (this.activeView === "admin" && this.canAccessAdminViews)) &&
+        !this.hasLoadedSetupData
+      ) {
         void this.loadSetupData();
       }
 
-      if (this.activeView === "admin") {
+      if (this.activeView === "admin" && this.canAccessAdminViews) {
         void this.loadScheduleSnapshot();
       }
     }
@@ -520,6 +641,7 @@ export class HaTaskManagerPanel extends LitElement {
       window.clearInterval(this.pendingPollHandle);
       this.pendingPollHandle = null;
     }
+    this.stopUndoCountdown();
     super.disconnectedCallback();
   }
 
@@ -576,6 +698,7 @@ export class HaTaskManagerPanel extends LitElement {
           )}
         </nav>
         ${this.panelError ? html`<div class="error-banner">${this.panelError}</div>` : nothing}
+        ${this.renderUndoBanners()}
         <section>
           <h2>${activeTab?.label ?? "Task Manager"}</h2>
           <p class="subtitle">${activeTab?.description ?? ""}</p>
@@ -602,8 +725,55 @@ export class HaTaskManagerPanel extends LitElement {
           @confirm-request=${this.handleNfcConfirm}
           @dismiss-request=${this.dismissNfcDialog}
         ></task-manager-nfc-confirm-dialog>
+        <task-manager-destructive-confirm-dialog
+          .open=${this.destructiveDialog !== null}
+          .title=${this.destructiveDialogTitle}
+          .message=${this.destructiveDialogMessage}
+          .busy=${this.destructiveBusy}
+          .errorMessage=${this.destructiveError}
+          @confirm-request=${this.handleDestructiveConfirm}
+          @dismiss-request=${this.dismissDestructiveDialog}
+        ></task-manager-destructive-confirm-dialog>
       </main>
     `;
+  }
+
+  private renderUndoBanners() {
+    if (this.undoBanners.length === 0) {
+      return nothing;
+    }
+
+    const hasUndoInFlight = this.undoBusyOperationId !== "";
+
+    return html`${this.undoBanners.map((undoBanner) => {
+      const isUndoExpired = this.isUndoExpired(undoBanner);
+      const undoBusy = this.undoBusyOperationId === undoBanner.operationId;
+      const undoError = this.undoErrorsByOperationId[undoBanner.operationId] ?? "";
+
+      return html`
+        <div class="undo-banner" data-destructive-undo-banner>
+          <h3>${undoBanner.summary}</h3>
+          <p class="undo-meta" data-destructive-undo-expiry>
+            ${isUndoExpired
+              ? `Undo expired at ${formatTimestamp(undoBanner.undoExpiresAt)}.`
+              : `Undo available for ${this.undoCountdownLabel(undoBanner)} (expires ${formatTimestamp(undoBanner.undoExpiresAt)}).`}
+          </p>
+          <div class="undo-actions">
+            <button
+              type="button"
+              data-destructive-undo-button
+              ?disabled=${hasUndoInFlight || isUndoExpired}
+              @click=${() => {
+                void this.handleUndoAction(undoBanner.operationId);
+              }}
+            >
+              ${undoBusy ? "Undoing..." : "Undo"}
+            </button>
+          </div>
+          ${undoError ? html`<p class="undo-error">${undoError}</p>` : nothing}
+        </div>
+      `;
+    })}`;
   }
 
   private renderCurrentView(view: PanelView) {
@@ -638,9 +808,12 @@ export class HaTaskManagerPanel extends LitElement {
           <task-manager-analytics-view
             .profiles=${this.profiles}
             .analytics=${this.analyticsSnapshots}
+            .includeDeletedTaskHistory=${this.includeDeletedTaskHistory}
             .loading=${this.analyticsLoading}
             .errorMessage=${this.currentView === "analytics" ? "" : ""}
             @refresh-analytics=${this.refreshAnalytics}
+            @reset-analytics-baseline-request=${this.handleResetAnalyticsBaselineRequest}
+            @include-deleted-history-change=${this.handleIncludeDeletedHistoryChange}
           ></task-manager-analytics-view>
         `;
       case "admin":
@@ -661,43 +834,48 @@ export class HaTaskManagerPanel extends LitElement {
               @save-task-request=${this.handleSaveTask}
               @archive-task-request=${this.handleArchiveTask}
               @restore-task-request=${this.handleRestoreTask}
+              @delete-task-definition-request=${this.handleDeleteTaskDefinitionRequest}
             ></task-manager-task-builder-view>
-            <div class="snapshot-shell">
-              <div class="snapshot-controls">
-                <label>
-                  Snapshot from
-                  <input
-                    type="date"
-                    data-snapshot-from-date
-                    .value=${this.snapshotFromDate}
-                    @input=${this.handleSnapshotFromDateInput}
-                  />
-                </label>
-                <label>
-                  Snapshot to
-                  <input
-                    type="date"
-                    data-snapshot-to-date
-                    .value=${this.snapshotToDate}
-                    @input=${this.handleSnapshotToDateInput}
-                  />
-                </label>
-                <button type="button" data-load-snapshot-range @click=${this.handleLoadSnapshotRange}>
-                  Load snapshot
-                </button>
-              </div>
-              ${this.snapshotError ? html`<div class="snapshot-error">${this.snapshotError}</div>` : nothing}
-              <task-manager-schedule-snapshot-view
-                .snapshotGroups=${this.snapshotGroups}
-                .tasksById=${this.tasksById}
-                .profileLabelsById=${this.profileLabelsById}
-                .snapshotFromDate=${this.snapshotFromDate}
-                .snapshotToDate=${this.snapshotToDate}
-                .loading=${this.snapshotLoading}
-                .errorMessage=${this.snapshotError}
-                @edit-task-request=${this.handleSnapshotEditTask}
-              ></task-manager-schedule-snapshot-view>
-            </div>
+            ${this.canAccessAdminViews
+              ? html`
+                  <div class="snapshot-shell">
+                    <div class="snapshot-controls">
+                      <label>
+                        Snapshot from
+                        <input
+                          type="date"
+                          data-snapshot-from-date
+                          .value=${this.snapshotFromDate}
+                          @input=${this.handleSnapshotFromDateInput}
+                        />
+                      </label>
+                      <label>
+                        Snapshot to
+                        <input
+                          type="date"
+                          data-snapshot-to-date
+                          .value=${this.snapshotToDate}
+                          @input=${this.handleSnapshotToDateInput}
+                        />
+                      </label>
+                      <button type="button" data-load-snapshot-range @click=${this.handleLoadSnapshotRange}>
+                        Load snapshot
+                      </button>
+                    </div>
+                    ${this.snapshotError ? html`<div class="snapshot-error">${this.snapshotError}</div>` : nothing}
+                    <task-manager-schedule-snapshot-view
+                      .snapshotGroups=${this.snapshotGroups}
+                      .tasksById=${this.tasksById}
+                      .profileLabelsById=${this.profileLabelsById}
+                      .snapshotFromDate=${this.snapshotFromDate}
+                      .snapshotToDate=${this.snapshotToDate}
+                      .loading=${this.snapshotLoading}
+                      .errorMessage=${this.snapshotError}
+                      @edit-task-request=${this.handleSnapshotEditTask}
+                    ></task-manager-schedule-snapshot-view>
+                  </div>
+                `
+              : nothing}
           </div>
         `;
       case "setup":
@@ -764,6 +942,27 @@ export class HaTaskManagerPanel extends LitElement {
     }
   }
 
+  private stopUndoCountdown(): void {
+    if (this.undoCountdownHandle !== null) {
+      window.clearInterval(this.undoCountdownHandle);
+      this.undoCountdownHandle = null;
+    }
+  }
+
+  private startUndoCountdown(): void {
+    this.stopUndoCountdown();
+    if (this.undoBanners.every((undoState) => this.isUndoExpired(undoState))) {
+      return;
+    }
+
+    this.undoCountdownHandle = window.setInterval(() => {
+      this.undoCountdownNow = Date.now();
+      if (this.undoBanners.every((undoState) => this.isUndoExpired(undoState))) {
+        this.stopUndoCountdown();
+      }
+    }, 1000);
+  }
+
   private clearPanelError(): void {
     this.panelError = "";
     this.panelErrorSource = null;
@@ -783,7 +982,9 @@ export class HaTaskManagerPanel extends LitElement {
   private invalidateAdminMutations(): void {
     this.setupMutationRequestId += 1;
     this.taskSaveRequestId += 1;
+    this.destructiveMutationRequestId += 1;
     this.snapshotLoadRequestId += 1;
+    this.analyticsLoadRequestId += 1;
     this.setupBusy = false;
     this.taskBuilderSaving = false;
     this.taskBuilderStatusMessage = "";
@@ -795,6 +996,11 @@ export class HaTaskManagerPanel extends LitElement {
     this.snapshotError = "";
     this.snapshotFromDate = shiftIsoDate(todayIso(), -14);
     this.snapshotToDate = shiftIsoDate(todayIso(), 30);
+    this.destructiveDialog = null;
+    this.destructiveBusy = false;
+    this.destructiveError = "";
+    this.analyticsLoading = false;
+    this.clearUndoBanners();
   }
 
   private beginCoreLoad(): {
@@ -879,6 +1085,22 @@ export class HaTaskManagerPanel extends LitElement {
     };
   }
 
+  private beginDestructiveMutation(): {
+    hass: HomeAssistantLike;
+    requestId: number;
+    userContextKey: string;
+  } | null {
+    if (!this.hass || !this.canRunDestructiveActions) {
+      return null;
+    }
+
+    return {
+      hass: this.hass,
+      requestId: ++this.destructiveMutationRequestId,
+      userContextKey: this.currentUserContextKey,
+    };
+  }
+
   private beginSnapshotLoad(): {
     hass: HomeAssistantLike;
     requestId: number;
@@ -891,6 +1113,22 @@ export class HaTaskManagerPanel extends LitElement {
     return {
       hass: this.hass,
       requestId: ++this.snapshotLoadRequestId,
+      userContextKey: this.currentUserContextKey,
+    };
+  }
+
+  private beginAnalyticsLoad(): {
+    hass: HomeAssistantLike;
+    requestId: number;
+    userContextKey: string;
+  } | null {
+    if (!this.hass) {
+      return null;
+    }
+
+    return {
+      hass: this.hass,
+      requestId: ++this.analyticsLoadRequestId,
       userContextKey: this.currentUserContextKey,
     };
   }
@@ -911,8 +1149,19 @@ export class HaTaskManagerPanel extends LitElement {
     return requestId === this.taskSaveRequestId && userContextKey === this.currentUserContextKey;
   }
 
+  private isCurrentDestructiveMutation(requestId: number, userContextKey: string): boolean {
+    return (
+      requestId === this.destructiveMutationRequestId &&
+      userContextKey === this.currentUserContextKey
+    );
+  }
+
   private isCurrentSnapshotLoad(requestId: number, userContextKey: string): boolean {
     return requestId === this.snapshotLoadRequestId && userContextKey === this.currentUserContextKey;
+  }
+
+  private isCurrentAnalyticsLoad(requestId: number, userContextKey: string): boolean {
+    return requestId === this.analyticsLoadRequestId && userContextKey === this.currentUserContextKey;
   }
 
   private isCurrentSetupWatchRefresh(
@@ -1112,28 +1361,47 @@ export class HaTaskManagerPanel extends LitElement {
   }
 
   private async loadAnalytics(): Promise<void> {
-    if (!this.hass) {
+    const loadRequest = this.beginAnalyticsLoad();
+    if (!loadRequest) {
       return;
     }
 
     if (this.profiles.length === 0) {
-      this.analyticsSnapshots = {};
+      if (this.isCurrentAnalyticsLoad(loadRequest.requestId, loadRequest.userContextKey)) {
+        this.analyticsSnapshots = {};
+        this.analyticsLoading = false;
+      }
       return;
     }
 
+    const includeDeletedTaskHistory = this.includeDeletedTaskHistory;
     this.analyticsLoading = true;
+
     try {
       const snapshots = await Promise.all(
         this.profiles.map(async (profile) => {
-          const snapshot = await fetchAnalytics(this.hass, { profileId: profile.id, horizonDays: 30 });
+          const snapshot = await fetchAnalytics(loadRequest.hass, {
+            profileId: profile.id,
+            horizonDays: 30,
+            includeDeletedTaskHistory,
+          });
           return [profile.id, snapshot] as const;
         })
       );
+
+      if (!this.isCurrentAnalyticsLoad(loadRequest.requestId, loadRequest.userContextKey)) {
+        return;
+      }
+
       this.analyticsSnapshots = Object.fromEntries(snapshots);
     } catch (error) {
-      this.setPanelError(errorMessage(error));
+      if (this.isCurrentAnalyticsLoad(loadRequest.requestId, loadRequest.userContextKey)) {
+        this.setPanelError(errorMessage(error));
+      }
     } finally {
-      this.analyticsLoading = false;
+      if (this.isCurrentAnalyticsLoad(loadRequest.requestId, loadRequest.userContextKey)) {
+        this.analyticsLoading = false;
+      }
     }
   }
 
@@ -1262,6 +1530,211 @@ export class HaTaskManagerPanel extends LitElement {
 
   private refreshAnalytics = async (): Promise<void> => {
     await this.loadAnalytics();
+  };
+
+  private handleIncludeDeletedHistoryChange = async (
+    event: CustomEvent<{ includeDeletedTaskHistory: boolean }>
+  ): Promise<void> => {
+    this.includeDeletedTaskHistory = event.detail.includeDeletedTaskHistory;
+    await this.loadAnalytics();
+  };
+
+  private handleDeleteTaskDefinitionRequest = (
+    event: CustomEvent<{ taskId: string }>
+  ): void => {
+    if (!this.canRunDestructiveActions) {
+      return;
+    }
+
+    const task = this.tasks.find((candidate) => candidate.id === event.detail.taskId);
+    if (!task) {
+      return;
+    }
+
+    this.destructiveDialog = {
+      mode: "delete-task-definition",
+      taskId: task.id,
+      taskTitle: task.title,
+    };
+    this.destructiveError = "";
+  };
+
+  private handleResetAnalyticsBaselineRequest = (): void => {
+    if (!this.canRunDestructiveActions) {
+      return;
+    }
+
+    this.destructiveDialog = {
+      mode: "reset-analytics-baseline",
+    };
+    this.destructiveError = "";
+  };
+
+  private dismissDestructiveDialog = (): void => {
+    if (this.destructiveBusy) {
+      return;
+    }
+
+    this.destructiveDialog = null;
+    this.destructiveError = "";
+  };
+
+  private handleDestructiveConfirm = async (
+    event: CustomEvent<{ confirmText: string }>
+  ): Promise<void> => {
+    if (!this.destructiveDialog) {
+      return;
+    }
+
+    const mutationRequest = this.beginDestructiveMutation();
+    if (!mutationRequest) {
+      return;
+    }
+
+    this.destructiveBusy = true;
+    this.destructiveError = "";
+
+    try {
+      if (this.destructiveDialog.mode === "delete-task-definition") {
+        const dialogState = this.destructiveDialog;
+        const result = await deleteTaskDefinition(mutationRequest.hass, {
+          taskId: dialogState.taskId,
+          confirmText: event.detail.confirmText,
+        });
+
+        if (!this.isCurrentDestructiveMutation(mutationRequest.requestId, mutationRequest.userContextKey)) {
+          return;
+        }
+
+        this.destructiveDialog = null;
+        this.registerUndoBanner({
+          mode: "delete-task-definition",
+          operationId: result.operation_id,
+          undoExpiresAt: result.undo_expires_at,
+          summary: `Deleted ${dialogState.taskTitle}.`,
+        });
+        await this.refreshAfterTaskMutation();
+        return;
+      }
+
+      const resetResult = await resetAnalyticsBaseline(mutationRequest.hass, {
+        confirmText: event.detail.confirmText,
+      });
+
+      if (!this.isCurrentDestructiveMutation(mutationRequest.requestId, mutationRequest.userContextKey)) {
+        return;
+      }
+
+      this.destructiveDialog = null;
+      this.registerUndoBanner(this.undoBannerFromResetResult(resetResult));
+      await this.loadAnalytics();
+    } catch (error) {
+      if (this.isCurrentDestructiveMutation(mutationRequest.requestId, mutationRequest.userContextKey)) {
+        this.destructiveError = errorMessage(error);
+      }
+    } finally {
+      if (this.isCurrentDestructiveMutation(mutationRequest.requestId, mutationRequest.userContextKey)) {
+        this.destructiveBusy = false;
+      }
+    }
+  };
+
+  private undoBannerFromResetResult(result: ResetAnalyticsBaselineResult): UndoBannerState {
+    return {
+      mode: "reset-analytics-baseline",
+      operationId: result.operation_id,
+      undoExpiresAt: result.undo_expires_at,
+      summary: "Reset analytics baseline.",
+    };
+  }
+
+  private registerUndoBanner(state: UndoBannerState): void {
+    this.undoBanners = [
+      state,
+      ...this.undoBanners.filter((undoState) => undoState.operationId !== state.operationId),
+    ].slice(0, MAX_RECENT_UNDO_ACTIONS);
+    this.undoBusyOperationId = "";
+    this.undoErrorsByOperationId = {};
+    this.undoCountdownNow = Date.now();
+    this.startUndoCountdown();
+  }
+
+  private clearUndoBanners(): void {
+    this.undoBanners = [];
+    this.undoBusyOperationId = "";
+    this.undoErrorsByOperationId = {};
+    this.undoCountdownNow = Date.now();
+    this.stopUndoCountdown();
+  }
+
+  private removeUndoBanner(operationId: string): void {
+    this.undoBanners = this.undoBanners.filter((undoState) => undoState.operationId !== operationId);
+    this.undoBusyOperationId = this.undoBusyOperationId === operationId ? "" : this.undoBusyOperationId;
+    const nextUndoErrors = { ...this.undoErrorsByOperationId };
+    delete nextUndoErrors[operationId];
+    this.undoErrorsByOperationId = nextUndoErrors;
+    this.undoCountdownNow = Date.now();
+    this.startUndoCountdown();
+  }
+
+  private handleUndoAction = async (operationId: string): Promise<void> => {
+    const undoState = this.undoBanners.find((candidate) => candidate.operationId === operationId);
+    if (!undoState || this.isUndoExpired(undoState)) {
+      return;
+    }
+
+    if (this.undoBusyOperationId !== "") {
+      return;
+    }
+
+    const mutationRequest = this.beginDestructiveMutation();
+    if (!mutationRequest) {
+      return;
+    }
+
+    this.undoBusyOperationId = operationId;
+    this.undoErrorsByOperationId = {
+      ...this.undoErrorsByOperationId,
+      [operationId]: "",
+    };
+
+    try {
+      if (undoState.mode === "delete-task-definition") {
+        await undoDeleteTaskDefinition(mutationRequest.hass, {
+          operationId: undoState.operationId,
+        });
+        if (!this.isCurrentDestructiveMutation(mutationRequest.requestId, mutationRequest.userContextKey)) {
+          return;
+        }
+
+        await this.refreshAfterTaskMutation();
+        this.removeUndoBanner(operationId);
+      } else {
+        await undoAnalyticsBaselineReset(mutationRequest.hass, {
+          operationId: undoState.operationId,
+        });
+        if (!this.isCurrentDestructiveMutation(mutationRequest.requestId, mutationRequest.userContextKey)) {
+          return;
+        }
+
+        await this.loadAnalytics();
+        this.removeUndoBanner(operationId);
+      }
+    } catch (error) {
+      if (this.isCurrentDestructiveMutation(mutationRequest.requestId, mutationRequest.userContextKey)) {
+        this.undoErrorsByOperationId = {
+          ...this.undoErrorsByOperationId,
+          [operationId]: errorMessage(error),
+        };
+      }
+    } finally {
+      if (
+        this.isCurrentDestructiveMutation(mutationRequest.requestId, mutationRequest.userContextKey) &&
+        this.undoBusyOperationId === operationId
+      ) {
+        this.undoBusyOperationId = "";
+      }
+    }
   };
 
   private handleSnapshotFromDateInput = (event: Event): void => {
@@ -1508,6 +1981,55 @@ export class HaTaskManagerPanel extends LitElement {
     return this.hass?.user?.is_admin === true;
   }
 
+  private get destructiveDialogTitle(): string {
+    if (!this.destructiveDialog) {
+      return "Confirm action";
+    }
+
+    if (this.destructiveDialog.mode === "delete-task-definition") {
+      return `Delete ${this.destructiveDialog.taskTitle}?`;
+    }
+
+    return "Reset analytics baseline?";
+  }
+
+  private get destructiveDialogMessage(): string {
+    if (!this.destructiveDialog) {
+      return "";
+    }
+
+    if (this.destructiveDialog.mode === "delete-task-definition") {
+      return "This removes the task definition from active and archived lists. Undo is available for a limited time.";
+    }
+
+    return "This resets analytics baselines for trend comparisons. Undo is available for a limited time.";
+  }
+
+  private undoRemainingSeconds(undoState: UndoBannerState): number {
+    const expiresAt = new Date(undoState.undoExpiresAt).getTime();
+    if (!Number.isFinite(expiresAt)) {
+      return 0;
+    }
+
+    return Math.max(0, Math.ceil((expiresAt - this.undoCountdownNow) / 1000));
+  }
+
+  private undoCountdownLabel(undoState: UndoBannerState): string {
+    return formatRemainingSeconds(this.undoRemainingSeconds(undoState));
+  }
+
+  private isUndoExpired(undoState: UndoBannerState): boolean {
+    return this.undoRemainingSeconds(undoState) <= 0;
+  }
+
+  private get canRunDestructiveActions(): boolean {
+    return this.currentProfile?.mapped === true;
+  }
+
+  private get canAccessManageTasksView(): boolean {
+    return this.canAccessAdminViews || this.canRunDestructiveActions;
+  }
+
   private get currentUserContextKey(): string {
     const userId = this.hass?.user?.id ?? "";
     const accessLevel = this.canAccessAdminViews ? "admin" : "user";
@@ -1515,7 +2037,11 @@ export class HaTaskManagerPanel extends LitElement {
   }
 
   private get activeView(): PanelView {
-    if ((this.currentView === "setup" || this.currentView === "admin") && !this.canAccessAdminViews) {
+    if (this.currentView === "setup" && !this.canAccessAdminViews) {
+      return "my-tasks";
+    }
+
+    if (this.currentView === "admin" && !this.canAccessManageTasksView) {
       return "my-tasks";
     }
 
@@ -1523,20 +2049,32 @@ export class HaTaskManagerPanel extends LitElement {
   }
 
   private get navigationTabs(): NavigationTab[] {
-    return NAVIGATION_TABS.filter(
-      (tab) => (tab.id !== "setup" && tab.id !== "admin") || this.canAccessAdminViews
-    );
+    return NAVIGATION_TABS.filter((tab) => {
+      if (tab.id === "setup") {
+        return this.canAccessAdminViews;
+      }
+
+      if (tab.id === "admin") {
+        return this.canAccessManageTasksView;
+      }
+
+      return true;
+    });
   }
 
   private selectView(view: PanelView): void {
-    if (view === "setup" || view === "admin") {
+    if (view === "setup") {
       if (!this.canAccessAdminViews) {
         return;
       }
 
-      if (view === "setup" && !this.hasLoadedSetupData) {
+      if (!this.hasLoadedSetupData) {
         this.setupLoading = true;
       }
+    }
+
+    if (view === "admin" && !this.canAccessManageTasksView) {
+      return;
     }
 
     if (view !== "setup") {

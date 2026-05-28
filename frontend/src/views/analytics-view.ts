@@ -48,6 +48,8 @@ export class AnalyticsView extends LitElement {
 
   @property({ attribute: false }) public analytics: Record<string, ProfileAnalyticsSnapshot> = {};
 
+  @property({ type: Boolean }) public includeDeletedTaskHistory = true;
+
   @property({ type: Boolean }) public loading = false;
 
   @property() public errorMessage = "";
@@ -76,6 +78,29 @@ export class AnalyticsView extends LitElement {
       color: #627362;
       max-width: 60ch;
       line-height: 1.55;
+    }
+
+    .toolbar-actions {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+
+    .toggle {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      color: #294132;
+      font-weight: 600;
+      white-space: nowrap;
+    }
+
+    .toggle input {
+      width: 16px;
+      height: 16px;
+      accent-color: #2f6b47;
     }
 
     button {
@@ -196,9 +221,23 @@ export class AnalyticsView extends LitElement {
           <h2>Analytics</h2>
           <p>Snapshot metrics, trend lines, and completion mix update from the backend’s immutable history and due-instance projection.</p>
         </div>
-        <button type="button" ?disabled=${this.loading} @click=${this.refreshAnalytics}>
-          ${this.loading ? "Refreshing..." : "Refresh Analytics"}
-        </button>
+        <div class="toolbar-actions">
+          <label class="toggle">
+            <input
+              data-include-deleted-history-toggle
+              type="checkbox"
+              .checked=${this.includeDeletedTaskHistory}
+              @change=${this.handleIncludeDeletedHistoryChange}
+            />
+            Include deleted history
+          </label>
+          <button type="button" data-reset-analytics-baseline ?disabled=${this.loading} @click=${this.resetAnalyticsBaseline}>
+            Reset Baseline
+          </button>
+          <button type="button" ?disabled=${this.loading} @click=${this.refreshAnalytics}>
+            ${this.loading ? "Refreshing..." : "Refresh Analytics"}
+          </button>
+        </div>
       </div>
       ${this.errorMessage ? html`<div class="error">${this.errorMessage}</div>` : nothing}
       ${this.profiles.length === 0
@@ -240,6 +279,27 @@ export class AnalyticsView extends LitElement {
   private refreshAnalytics(): void {
     this.dispatchEvent(
       new CustomEvent("refresh-analytics", {
+        bubbles: true,
+        composed: true,
+      })
+    );
+  }
+
+  private resetAnalyticsBaseline(): void {
+    this.dispatchEvent(
+      new CustomEvent("reset-analytics-baseline-request", {
+        bubbles: true,
+        composed: true,
+      })
+    );
+  }
+
+  private handleIncludeDeletedHistoryChange(event: Event): void {
+    const target = event.currentTarget as HTMLInputElement;
+    this.includeDeletedTaskHistory = target.checked;
+    this.dispatchEvent(
+      new CustomEvent("include-deleted-history-change", {
+        detail: { includeDeletedTaskHistory: this.includeDeletedTaskHistory },
         bubbles: true,
         composed: true,
       })

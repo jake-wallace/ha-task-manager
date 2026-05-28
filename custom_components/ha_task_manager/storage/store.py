@@ -10,6 +10,7 @@ from homeassistant.helpers.storage import Store
 
 from custom_components.ha_task_manager.const import (
     STORAGE_KEY_COMPLETIONS,
+    STORAGE_KEY_CONTROLS,
     STORAGE_KEY_NFC,
     STORAGE_KEY_PROFILES,
     STORAGE_KEY_TASKS,
@@ -40,6 +41,7 @@ class TaskStore:
     def __init__(self, hass: HomeAssistant) -> None:
         self._completions_lock = asyncio.Lock()
         self._nfc_lock = asyncio.Lock()
+        self._controls_lock = asyncio.Lock()
         self._tasks_store: Store[dict[str, Any]] = Store(
             hass,
             STORAGE_VERSION,
@@ -61,6 +63,11 @@ class TaskStore:
             STORAGE_KEY_NFC,
             minor_version=STORAGE_MINOR_VERSION_NFC,
         )
+        self._controls_store: Store[dict[str, Any]] = Store(
+            hass,
+            STORAGE_VERSION,
+            STORAGE_KEY_CONTROLS,
+        )
 
     @staticmethod
     def _normalize_nfc_payload(data: dict[str, Any] | None) -> dict[str, Any]:
@@ -69,6 +76,35 @@ class TaskStore:
         return {
             "tag_mappings": data.get("tag_mappings", []),
             "discovery_entries": data.get("discovery_entries", []),
+        }
+
+    @staticmethod
+    def _normalize_controls_payload(data: dict[str, Any] | None) -> dict[str, Any]:
+        """Ensure destructive control payloads include all expected collections."""
+        data = data or {}
+        task_deletions = data.get("task_deletions", [])
+        if not isinstance(task_deletions, list):
+            task_deletions = []
+
+        analytics_baseline_resets = data.get("analytics_baseline_resets", [])
+        if not isinstance(analytics_baseline_resets, list):
+            analytics_baseline_resets = []
+
+        analytics_baseline_state = data.get("analytics_baseline_state")
+        if not isinstance(analytics_baseline_state, dict):
+            analytics_baseline_state = {"effective_baseline_at": None}
+        else:
+            analytics_baseline_state = {
+                **analytics_baseline_state,
+                "effective_baseline_at": analytics_baseline_state.get(
+                    "effective_baseline_at"
+                ),
+            }
+
+        return {
+            "task_deletions": task_deletions,
+            "analytics_baseline_resets": analytics_baseline_resets,
+            "analytics_baseline_state": analytics_baseline_state,
         }
 
     async def async_load_tasks(self) -> dict[str, Any]:
@@ -115,6 +151,33 @@ class TaskStore:
                     "discovery_entries": data.get(
                         "discovery_entries",
                         existing["discovery_entries"],
+                    ),
+                }
+            )
+
+    async def async_load_controls(self) -> dict[str, Any]:
+        """Load raw destructive-operation control payloads."""
+        return self._normalize_controls_payload(await self._controls_store.async_load())
+
+    async def async_save_controls(self, data: dict[str, Any]) -> None:
+        """Persist raw destructive-operation control payloads."""
+        async with self._controls_lock:
+            existing = self._normalize_controls_payload(
+                await self._controls_store.async_load()
+            )
+            await self._controls_store.async_save(
+                {
+                    "task_deletions": data.get(
+                        "task_deletions",
+                        existing["task_deletions"],
+                    ),
+                    "analytics_baseline_resets": data.get(
+                        "analytics_baseline_resets",
+                        existing["analytics_baseline_resets"],
+                    ),
+                    "analytics_baseline_state": data.get(
+                        "analytics_baseline_state",
+                        existing["analytics_baseline_state"],
                     ),
                 }
             )

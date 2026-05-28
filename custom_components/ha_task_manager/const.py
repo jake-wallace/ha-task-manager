@@ -9,6 +9,7 @@ STORAGE_KEY_TASKS = f"{DOMAIN}_tasks"
 STORAGE_KEY_COMPLETIONS = f"{DOMAIN}_completions"
 STORAGE_KEY_PROFILES = f"{DOMAIN}_profiles"
 STORAGE_KEY_NFC = f"{DOMAIN}_nfc"
+STORAGE_KEY_CONTROLS = f"{DOMAIN}_controls"
 
 EVENT_NFC_SCANNED = f"{DOMAIN}_nfc_scanned"
 EVENT_COMPLETION_REQUESTED = f"{DOMAIN}_completion_requested"

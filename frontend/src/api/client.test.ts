@@ -2,13 +2,18 @@ import { describe, expect, it } from "vitest";
 
 import {
   archiveTask,
+  deleteTaskDefinition,
+  fetchAnalytics,
   fetchHaUsers,
   fetchDueInstances,
   fetchProfileMappings,
   fetchUnmappedNfcTags,
   importHaUser,
   linkNfcTag,
+  resetAnalyticsBaseline,
   restoreTask,
+  undoAnalyticsBaselineReset,
+  undoDeleteTaskDefinition,
   type HomeAssistantConnection,
   type LinkNfcTagOptions
 } from "./client";
@@ -102,6 +107,95 @@ describe("client admin setup helpers", () => {
         type: "ha_task_manager/due_instances",
         from_date: "2026-05-10",
         to_date: "2026-05-12"
+      }
+    ]);
+  });
+
+  it("maps delete_task_definition payload fields", async () => {
+    const { hass, sentMessages } = createConnection();
+
+    await deleteTaskDefinition(hass, {
+      taskId: "task-bathroom",
+      confirmText: "delete"
+    });
+
+    expect(sentMessages).toEqual([
+      {
+        type: "ha_task_manager/delete_task_definition",
+        task_id: "task-bathroom",
+        confirm_text: "delete"
+      }
+    ]);
+  });
+
+  it("maps undo_delete_task_definition payload fields", async () => {
+    const { hass, sentMessages } = createConnection();
+
+    await undoDeleteTaskDefinition(hass, {
+      operationId: "operation-delete-1"
+    });
+
+    expect(sentMessages).toEqual([
+      {
+        type: "ha_task_manager/undo_delete_task_definition",
+        operation_id: "operation-delete-1"
+      }
+    ]);
+  });
+
+  it("maps reset_analytics_baseline payload fields", async () => {
+    const { hass, sentMessages } = createConnection();
+
+    await resetAnalyticsBaseline(hass, {
+      confirmText: "reset"
+    });
+
+    expect(sentMessages).toEqual([
+      {
+        type: "ha_task_manager/reset_analytics_baseline",
+        confirm_text: "reset"
+      }
+    ]);
+  });
+
+  it("maps undo_analytics_baseline_reset payload fields", async () => {
+    const { hass, sentMessages } = createConnection();
+
+    await undoAnalyticsBaselineReset(hass, {
+      operationId: "operation-baseline-1"
+    });
+
+    expect(sentMessages).toEqual([
+      {
+        type: "ha_task_manager/undo_analytics_baseline_reset",
+        operation_id: "operation-baseline-1"
+      }
+    ]);
+  });
+
+  it("propagates include_deleted_task_history in analytics queries, including false", async () => {
+    const { hass, sentMessages } = createConnection();
+
+    await fetchAnalytics(hass, {
+      profileId: "profile-123",
+      includeDeletedTaskHistory: false
+    });
+
+    await fetchAnalytics(hass, {
+      profileId: "profile-123",
+      includeDeletedTaskHistory: true
+    });
+
+    expect(sentMessages).toEqual([
+      {
+        type: "ha_task_manager/analytics",
+        profile_id: "profile-123",
+        include_deleted_task_history: false
+      },
+      {
+        type: "ha_task_manager/analytics",
+        profile_id: "profile-123",
+        include_deleted_task_history: true
       }
     ]);
   });

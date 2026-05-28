@@ -135,6 +135,35 @@ def test_missed_count_filters_due_instances_by_assigned_profile(
     assert snapshot.missed_count == 1
 
 
+def test_missed_count_excludes_due_instances_older_than_baseline(
+    service: AnalyticsService,
+) -> None:
+    due_instances = [
+        build_due_instance(due_date=date(2026, 5, 1)),
+        build_due_instance(due_date=date(2026, 5, 2)),
+        build_due_instance(due_date=date(2026, 5, 3)),
+        build_due_instance(due_date=date(2026, 5, 4)),
+    ]
+    history = [
+        build_record(
+            profile_id="alice",
+            due_instance_id="task-1:2026-05-04",
+            completed_at=datetime(2026, 5, 4, 7, 0, tzinfo=UTC),
+        )
+    ]
+
+    snapshot = service.compute_snapshot(
+        profile_id="alice",
+        history=history,
+        projected_due_instances=due_instances,
+        task_assignments={"task-1": "alice"},
+        as_of=date(2026, 5, 5),
+        effective_baseline_at=datetime(2026, 5, 3, 12, 0, tzinfo=UTC),
+    )
+
+    assert snapshot.missed_count == 1
+
+
 def test_on_time_and_late_counts_are_computed_from_due_dates(
     service: AnalyticsService,
 ) -> None:
@@ -208,3 +237,57 @@ def test_current_and_longest_streak_are_computed_from_completion_days(
 
     assert snapshot.current_streak == 3
     assert snapshot.longest_streak == 3
+
+
+def test_compute_snapshot_applies_baseline_cutoff(service: AnalyticsService) -> None:
+    snapshot = service.compute_snapshot(
+        profile_id="alice",
+        history=[
+            build_record(
+                profile_id="alice",
+                due_instance_id="task-1:2026-05-10",
+                completed_at=datetime(2026, 5, 10, 9, 0, tzinfo=UTC),
+            ),
+            build_record(
+                profile_id="alice",
+                due_instance_id="task-1:2026-05-12",
+                completed_at=datetime(2026, 5, 12, 9, 0, tzinfo=UTC),
+            ),
+        ],
+        projected_due_instances=[],
+        task_assignments={"task-1": "alice"},
+        as_of=date(2026, 5, 13),
+        effective_baseline_at=datetime(2026, 5, 11, 0, 0, tzinfo=UTC),
+        include_deleted_task_history=True,
+        existing_task_ids={"task-1"},
+    )
+
+    assert snapshot.daily_completions == [(date(2026, 5, 12), 1)]
+    assert snapshot.on_time_count == 1
+    assert snapshot.late_count == 0
+
+
+def test_compute_snapshot_excludes_deleted_task_history_when_flag_disabled(
+    service: AnalyticsService,
+) -> None:
+    snapshot = service.compute_snapshot(
+        profile_id="alice",
+        history=[
+            build_record(
+                profile_id="alice",
+                task_id="task-deleted",
+                due_instance_id="task-deleted:2026-05-12",
+                completed_at=datetime(2026, 5, 12, 9, 0, tzinfo=UTC),
+            )
+        ],
+        projected_due_instances=[],
+        task_assignments={},
+        as_of=date(2026, 5, 13),
+        effective_baseline_at=None,
+        include_deleted_task_history=False,
+        existing_task_ids=set(),
+    )
+
+    assert snapshot.daily_completions == []
+    assert snapshot.on_time_count == 0
+    assert snapshot.late_count == 0

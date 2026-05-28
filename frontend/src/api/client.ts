@@ -1,14 +1,19 @@
 import type {
+  AnalyticsQuery,
   CompletionAttempt,
   CompletionRecord,
   CurrentUserProfile,
+  DeleteTaskDefinitionResult,
   HaUserSummary,
   HouseholdProfile,
   NfcDiscoveryEntry,
   NfcTagMapping,
   ProfileAnalyticsSnapshot,
+  ResetAnalyticsBaselineResult,
   TaskDefinition,
   TaskDueInstance,
+  UndoAnalyticsBaselineResetResult,
+  UndoDeleteTaskDefinitionResult,
   UserProfileMapping
 } from "../types/task";
 
@@ -36,10 +41,21 @@ export interface CompleteDueInstanceOptions {
   completedAt?: string;
 }
 
-export interface AnalyticsQuery {
-  profileId: string;
-  asOf?: string;
-  horizonDays?: number;
+export interface DeleteTaskDefinitionOptions {
+  taskId: string;
+  confirmText: string;
+}
+
+export interface UndoDeleteTaskDefinitionOptions {
+  operationId: string;
+}
+
+export interface ResetAnalyticsBaselineOptions {
+  confirmText: string;
+}
+
+export interface UndoAnalyticsBaselineResetOptions {
+  operationId: string;
 }
 
 export interface ImportHaUserOptions {
@@ -214,6 +230,50 @@ export function fetchAnalytics(
     type: `${DOMAIN}/analytics`,
     profile_id: query.profileId,
     ...(query.asOf ? { as_of: query.asOf } : {}),
-    ...(query.horizonDays !== undefined ? { horizon_days: query.horizonDays } : {})
+    ...(query.horizonDays !== undefined ? { horizon_days: query.horizonDays } : {}),
+    ...(query.includeDeletedTaskHistory !== undefined
+      ? { include_deleted_task_history: query.includeDeletedTaskHistory }
+      : {})
+  });
+}
+
+export function deleteTaskDefinition(
+  hass: HomeAssistantConnection,
+  options: DeleteTaskDefinitionOptions
+): Promise<DeleteTaskDefinitionResult> {
+  return callApi<DeleteTaskDefinitionResult>(hass, {
+    type: `${DOMAIN}/delete_task_definition`,
+    task_id: options.taskId,
+    confirm_text: options.confirmText
+  });
+}
+
+export function undoDeleteTaskDefinition(
+  hass: HomeAssistantConnection,
+  options: UndoDeleteTaskDefinitionOptions
+): Promise<UndoDeleteTaskDefinitionResult> {
+  return callApi<UndoDeleteTaskDefinitionResult>(hass, {
+    type: `${DOMAIN}/undo_delete_task_definition`,
+    operation_id: options.operationId
+  });
+}
+
+export function resetAnalyticsBaseline(
+  hass: HomeAssistantConnection,
+  options: ResetAnalyticsBaselineOptions
+): Promise<ResetAnalyticsBaselineResult> {
+  return callApi<ResetAnalyticsBaselineResult>(hass, {
+    type: `${DOMAIN}/reset_analytics_baseline`,
+    confirm_text: options.confirmText
+  });
+}
+
+export function undoAnalyticsBaselineReset(
+  hass: HomeAssistantConnection,
+  options: UndoAnalyticsBaselineResetOptions
+): Promise<UndoAnalyticsBaselineResetResult> {
+  return callApi<UndoAnalyticsBaselineResetResult>(hass, {
+    type: `${DOMAIN}/undo_analytics_baseline_reset`,
+    operation_id: options.operationId
   });
 }
