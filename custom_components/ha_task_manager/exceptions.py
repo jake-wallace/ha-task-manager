@@ -76,6 +76,16 @@ class NoActionableDueInstanceError(TaskManagerError):
         )
 
 
+class InvalidTaskDefinitionError(TaskManagerError):
+    """Raised when a task definition is invalid."""
+
+    task_id: str
+
+    def __init__(self, task_id: str, message: str) -> None:
+        self.task_id = task_id
+        super().__init__(message)
+
+
 class InvalidRecurrenceError(TaskManagerError):
     """Raised when a recurrence rule or skip window combination is invalid."""
 
