@@ -157,3 +157,68 @@ async def test_manual_completion_blocks_non_assigned_authenticated_user(
             ),
         }
     ]
+
+
+async def test_completing_one_off_task_archives_it(
+    enable_custom_integrations,
+    hass,
+    hass_ws_client,
+    hass_admin_user,
+) -> None:
+    """Test that a one-off task is archived upon completion."""
+    store = TaskStore(hass)
+    await store.async_save_profiles(
+        {
+            "profiles": [
+                {
+                    "id": "profile_parent",
+                    "display_name": "Parent",
+                    "avatar_url": "",
+                    "created_at": "2026-05-10T00:00:00+00:00",
+                }
+            ],
+            "mappings": [
+                {
+                    "id": "mapping-parent",
+                    "ha_user_id": hass_admin_user.id,
+                    "profile_id": "profile_parent",
+                    "created_at": "2026-05-10T00:00:00+00:00",
+                }
+            ],
+        }
+    )
+
+    data = await store.async_load_tasks()
+    tasks_list = data.get("tasks", [])
+    task_id = "test-one-off-task"
+    tasks_list.append(
+        {
+            "id": task_id,
+            "title": "One-off chore",
+            "active": True,
+            "recurrence": {"frequency": "none", "days_of_week": [], "interval_days": 1, "day_of_month": None},
+            "assigned_profile_id": "profile_parent",
+            "start_date": "2026-05-20",
+        }
+    )
+    await store.async_save_tasks({"tasks": tasks_list})
+    due_instance_id = f"{task_id}:2026-05-20"
+
+    entry = MockConfigEntry(domain=DOMAIN, title="Task Manager")
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+
+    client = await hass_ws_client(hass)
+    await client.send_json_auto_id(
+        {
+            "type": "ha_task_manager/complete_due_instance",
+            "due_instance_id": due_instance_id,
+        }
+    )
+    response = await client.receive_json()
+    assert response["success"]
+
+    # Verify task was archived
+    after_data = await store.async_load_tasks()
+    archived_task = next(t for t in after_data["tasks"] if t["id"] == task_id)
+    assert archived_task["active"] is False

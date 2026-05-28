@@ -588,6 +588,27 @@ async def _persist_latest_history_record_if_needed(
     return True
 
 
+async def _archive_one_off_task_if_needed(
+    task: TaskDefinition,
+    tasks: list[TaskDefinition],
+    store: TaskStore,
+) -> None:
+    """Archiving a one-off task after completion."""
+    if task.recurrence.frequency == RecurrenceFrequency.NONE and task.active:
+        task.active = False
+        task.updated_at = utc_now()
+        stored_tasks = [existing for existing in tasks if existing.id != task.id]
+        stored_tasks.append(task)
+        await store.async_save_tasks(
+            {
+                "tasks": [
+                    task_definition_to_dict(existing)
+                    for existing in stored_tasks
+                ]
+            }
+        )
+
+
 def _rebuild_nfc_service(
     runtime_data: dict[str, Any],
     *,
@@ -1859,6 +1880,7 @@ def async_register_websocket_api(hass: HomeAssistant) -> None:
 
         recorded_payload = completion_record_to_dict(completion_record)
         await store.async_append_completion(recorded_payload)
+        await _archive_one_off_task_if_needed(task, tasks, store)
         hass.bus.async_fire(EVENT_COMPLETION_RECORDED, recorded_payload)
         nfc_service.dismiss_confirmation(attempt.id)
         connection.send_result(msg["id"], completion_record_to_dict(completion_record))
@@ -1965,6 +1987,7 @@ def async_register_websocket_api(hass: HomeAssistant) -> None:
 
         recorded_payload = completion_record_to_dict(completion_record)
         await store.async_append_completion(recorded_payload)
+        await _archive_one_off_task_if_needed(task, tasks, store)
         hass.bus.async_fire(EVENT_COMPLETION_RECORDED, recorded_payload)
         connection.send_result(msg["id"], recorded_payload)
 

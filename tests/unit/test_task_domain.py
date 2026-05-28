@@ -2,7 +2,10 @@ from datetime import UTC, date, datetime
 
 import pytest
 
-from custom_components.ha_task_manager.exceptions import InvalidRecurrenceError
+from custom_components.ha_task_manager.exceptions import (
+    InvalidRecurrenceError,
+    InvalidTaskDefinitionError,
+)
 from custom_components.ha_task_manager.models import (
     RecurrenceFrequency,
     RecurrenceRule,
@@ -25,6 +28,7 @@ def build_task(
         title="Test Task",
         recurrence=recurrence,
         skip_windows=skip_windows or [],
+        assigned_profile_id="some-profile",
         created_at=created_at,
         updated_at=created_at,
     )
@@ -448,3 +452,37 @@ def test_actionable_selection_uses_lookback_as_backlog_search_chunk() -> None:
         (date(2026, 5, 2), 3),
         (date(2026, 5, 1), 1),
     ]
+
+
+def test_one_off_task_generates_single_instance(task_domain_service: TaskDomainService) -> None:
+    """Test that a task with NONE frequency yields exactly one instance on its start date."""
+    target_date = date(2026, 6, 1)
+    task = TaskDefinition(
+        title="One-off chore",
+        recurrence=RecurrenceRule(frequency=RecurrenceFrequency.NONE),
+        assigned_profile_id="some-profile",
+        start_date=target_date,
+    )
+
+    instances = task_domain_service.project_due_instances(
+        task=task,
+        from_date=date(2026, 5, 1),
+        horizon_days=62,
+    )
+
+    assert len(instances) == 1
+    assert instances[0].due_date == target_date
+
+
+def test_one_off_task_cannot_have_nfc(task_domain_service: TaskDomainService) -> None:
+    """Test that a task with NONE frequency cannot be mapped to an NFC tag."""
+    task = TaskDefinition(
+        title="One-off chore",
+        recurrence=RecurrenceRule(frequency=RecurrenceFrequency.NONE),
+        assigned_profile_id="some-profile",
+        nfc_tag_id="some-tag",
+    )
+
+    with pytest.raises(InvalidTaskDefinitionError, match="One-off tasks cannot be assigned NFC tags"):
+        task_domain_service.validate_task(task)
+

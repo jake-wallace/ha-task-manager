@@ -5,7 +5,10 @@ from __future__ import annotations
 import calendar
 from datetime import date, timedelta
 
-from custom_components.ha_task_manager.exceptions import InvalidRecurrenceError
+from custom_components.ha_task_manager.exceptions import (
+    InvalidRecurrenceError,
+    InvalidTaskDefinitionError,
+)
 from custom_components.ha_task_manager.models import (
     RecurrenceFrequency,
     RecurrenceRule,
@@ -135,6 +138,9 @@ class TaskDomainService:
 
 
 def _validate_task(task: TaskDefinition) -> None:
+    if task.recurrence.frequency == RecurrenceFrequency.NONE and task.nfc_tag_id is not None:
+        raise InvalidTaskDefinitionError(task.id, "One-off tasks cannot be assigned NFC tags.")
+
     _validate_recurrence(task.recurrence)
 
     for skip_window in task.skip_windows:
@@ -183,6 +189,10 @@ def _expand_due_dates(
 ) -> list[date]:
     rule = task.recurrence
 
+    if rule.frequency == RecurrenceFrequency.NONE:
+        if start_date <= task.start_date <= end_date:
+            return [task.start_date]
+        return []
     if rule.frequency == RecurrenceFrequency.DAILY:
         return _expand_daily(
             anchor_date=task.start_date,

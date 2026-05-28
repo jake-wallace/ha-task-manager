@@ -232,21 +232,8 @@ describe("task-manager-task-builder-view", () => {
     ]);
   });
 
-<<<<<<< HEAD
   it("shows an actionable error when submitting with no assignable profiles", async () => {
     const element = document.createElement("task-manager-task-builder-view") as TaskBuilderView;
-=======
-  it("creates a task when crypto.randomUUID is unavailable", async () => {
-    const element = document.createElement("task-manager-task-builder-view") as TaskBuilderView;
-    element.profiles = [
-      {
-        id: "profile-1",
-        display_name: "Alex Profile",
-        avatar_url: "",
-        created_at: "2026-05-10T00:00:00+00:00",
-      },
-    ];
->>>>>>> ha-task-manager-impl
 
     document.body.append(element);
     await element.updateComplete;
@@ -541,5 +528,68 @@ describe("task-manager-task-builder-view", () => {
     deleteButton?.click();
 
     expect(deleteEvents).toEqual([{ taskId: "task-archived" }]);
+  });
+
+  it("supports creating one-off tasks with none recurrence and hides recurrence/NFC fields", async () => {
+    const element = document.createElement("task-manager-task-builder-view") as TaskBuilderView;
+    element.profiles = [
+      {
+        id: "profile-1",
+        display_name: "Alex Profile",
+        avatar_url: "",
+        created_at: "2026-05-10T00:00:00+00:00",
+      },
+    ];
+
+    document.body.append(element);
+    await element.updateComplete;
+
+    // Click "New One-off Task"
+    const buttons = Array.from(element.shadowRoot?.querySelectorAll("button.new-button") ?? []);
+    const oneOffBtn = buttons.find((btn) => btn.textContent?.includes("New One-off Task"));
+    expect(oneOffBtn).not.toBeNull();
+
+    (oneOffBtn as HTMLButtonElement).click();
+    await element.updateComplete;
+
+    // Check that startDate label has text "Due Date"
+    const startDateLabel = element.shadowRoot?.querySelector("label[for='f-start-date']");
+    expect(startDateLabel?.textContent?.trim()).toBe("Due Date");
+
+    // Recurrence, skip windows and NFC tag select should not render
+    const frequencyGrid = element.shadowRoot?.querySelector(".frequency-grid");
+    const nfcSelect = element.shadowRoot?.querySelector("[data-nfc-tag-select]");
+    const skipWindowsList = element.shadowRoot?.querySelector(".skip-window-list");
+
+    expect(frequencyGrid).toBeNull();
+    expect(nfcSelect).toBeNull();
+    expect(skipWindowsList).toBeNull();
+
+    // Fill title and submit
+    const titleInput = element.shadowRoot?.querySelector("input[required]") as HTMLInputElement | null;
+    const form = element.shadowRoot?.querySelector("form") as HTMLFormElement | null;
+
+    titleInput!.value = "Do actual chores right now";
+    titleInput!.dispatchEvent(new Event("input"));
+
+    const saveTaskEvents: CustomEvent[] = [];
+    element.addEventListener("save-task-request", (event) => {
+      saveTaskEvents.push(event as CustomEvent);
+    });
+
+    form?.requestSubmit();
+    await element.updateComplete;
+
+    expect(saveTaskEvents).toHaveLength(1);
+    const savedTask = (saveTaskEvents[0].detail as { task: TaskDefinition }).task;
+    expect(savedTask.title).toBe("Do actual chores right now");
+    expect(savedTask.recurrence).toEqual({
+      frequency: "none",
+      days_of_week: [],
+      interval_days: 1,
+      day_of_month: null,
+    });
+    expect(savedTask.nfc_tag_id).toBeNull();
+    expect(savedTask.skip_windows).toEqual([]);
   });
 });
