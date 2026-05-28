@@ -454,8 +454,11 @@ export class TaskBuilderView extends LitElement {
         <aside class="panel">
           <h2>Manage Tasks</h2>
           <p>Create a new recurring task or load an existing definition for editing.</p>
-          <button class="new-button ${this.selectedTaskId === NEW_TASK_ID ? "active" : ""}" type="button" @click=${this.startNewTask}>
-            New Task
+          <button class="new-button ${this.selectedTaskId === NEW_TASK_ID && this.formState?.frequency !== "none" ? "active" : ""}" type="button" @click=${() => this.startNewTask(false)}>
+            New Recurring Task
+          </button>
+          <button class="new-button ${this.selectedTaskId === NEW_TASK_ID && this.formState?.frequency === "none" ? "active" : ""}" type="button" @click=${() => this.startNewTask(true)}>
+            New One-off Task
           </button>
           <div class="task-list">
             <section class="task-section" data-active-task-list>
@@ -579,153 +582,161 @@ export class TaskBuilderView extends LitElement {
               <textarea .value=${this.formState.description} @input=${this.handleTextInput("description")}></textarea>
             </label>
             <div class="row">
-              <label>
-                Start date
-                <input type="date" .value=${this.formState.startDate} @input=${this.handleTextInput("startDate")} required />
+              <label for="f-start-date">
+                ${this.formState.frequency === "none" ? "Due Date" : "Start Date"}
+                <input id="f-start-date" type="date" .value=${this.formState.startDate} @input=${this.handleTextInput("startDate")} required />
               </label>
-              <label>
-                NFC tag
-                <select
-                  data-nfc-tag-select
-                  .value=${this.formState.nfcTagId}
-                  @change=${this.handleTextInput("nfcTagId")}
-                >
-                  <option value="">Optional</option>
-                  ${this.availableNfcTagIds.map(
-                    (tagId) => html`<option value=${tagId}>${tagId}</option>`
-                  )}
-                </select>
-              </label>
-            </div>
-            <label>
-              Recurrence
-              <div class="frequency-grid">
-                ${([
-                  { value: "daily", label: "Daily" },
-                  { value: "weekly", label: "Weekly" },
-                  { value: "monthly", label: "Monthly" },
-                  { value: "custom_days", label: "Every N Days" },
-                ] as Array<{ value: RecurrenceFrequency; label: string }>).map(
-                  (option) => html`
-                    <button
-                      type="button"
-                      class="chip ${this.formState.frequency === option.value ? "active" : ""}"
-                      @click=${() => this.setFrequency(option.value)}
-                    >
-                      ${option.label}
-                    </button>
+              ${this.formState.frequency !== "none"
+                ? html`
+                    <label>
+                      NFC tag
+                      <select
+                        data-nfc-tag-select
+                        .value=${this.formState.nfcTagId}
+                        @change=${this.handleTextInput("nfcTagId")}
+                      >
+                        <option value="">Optional</option>
+                        ${this.availableNfcTagIds.map(
+                          (tagId) => html`<option value=${tagId}>${tagId}</option>`
+                        )}
+                      </select>
+                    </label>
                   `
-                )}
-              </div>
-            </label>
-            ${this.formState.frequency === "weekly"
+                : html``}
+            </div>
+            ${this.formState.frequency !== "none"
               ? html`
                   <label>
-                    Days of week
-                    <div class="weekday-grid">
-                      ${[
-                        { day: 1, label: "Mon" },
-                        { day: 2, label: "Tue" },
-                        { day: 3, label: "Wed" },
-                        { day: 4, label: "Thu" },
-                        { day: 5, label: "Fri" },
-                        { day: 6, label: "Sat" },
-                        { day: 7, label: "Sun" },
-                      ].map(
-                        ({ day, label }) => html`
+                    Recurrence
+                    <div class="frequency-grid">
+                      ${([
+                        { value: "daily", label: "Daily" },
+                        { value: "weekly", label: "Weekly" },
+                        { value: "monthly", label: "Monthly" },
+                        { value: "custom_days", label: "Every N Days" },
+                      ] as Array<{ value: RecurrenceFrequency; label: string }>).map(
+                        (option) => html`
                           <button
                             type="button"
-                            class="chip ${this.formState.daysOfWeek.includes(day) ? "active" : ""}"
-                            @click=${() => this.toggleWeekday(day)}
+                            class="chip ${this.formState.frequency === option.value ? "active" : ""}"
+                            @click=${() => this.setFrequency(option.value)}
                           >
-                            ${label}
+                            ${option.label}
                           </button>
                         `
                       )}
                     </div>
                   </label>
-                `
-              : html``}
-            ${this.formState.frequency === "custom_days"
-              ? html`
-                  <label>
-                    Interval days
-                    <input
-                      type="number"
-                      min="1"
-                      .value=${String(this.formState.intervalDays)}
-                      @input=${this.handleNumberInput("intervalDays")}
-                      required
-                    />
-                  </label>
-                `
-              : html``}
-            ${this.formState.frequency === "monthly"
-              ? html`
-                  <label>
-                    Day of month
-                    <input
-                      type="number"
-                      min="1"
-                      max="31"
-                      .value=${String(this.formState.dayOfMonth)}
-                      @input=${this.handleNumberInput("dayOfMonth")}
-                      required
-                    />
-                  </label>
-                `
-              : html``}
-            <label>
-              Skip windows
-              <div class="skip-window-list">
-                ${this.formState.skipWindows.map(
-                  (skipWindow, index) => html`
-                    <div class="skip-window-card">
-                      <div class="row">
+                  ${this.formState.frequency === "weekly"
+                    ? html`
                         <label>
-                          Label
-                          <input
-                            .value=${skipWindow.label}
-                            @input=${this.handleSkipWindowText(index, "label")}
-                            placeholder="Vacation, renovation, travel"
-                          />
+                          Days of week
+                          <div class="weekday-grid">
+                            ${[
+                              { day: 1, label: "Mon" },
+                              { day: 2, label: "Tue" },
+                              { day: 3, label: "Wed" },
+                              { day: 4, label: "Thu" },
+                              { day: 5, label: "Fri" },
+                              { day: 6, label: "Sat" },
+                              { day: 7, label: "Sun" },
+                            ].map(
+                              ({ day, label }) => html`
+                                <button
+                                  type="button"
+                                  class="chip ${this.formState.daysOfWeek.includes(day) ? "active" : ""}"
+                                  @click=${() => this.toggleWeekday(day)}
+                                >
+                                  ${label}
+                                </button>
+                              `
+                            )}
+                          </div>
                         </label>
+                      `
+                    : html``}
+                  ${this.formState.frequency === "custom_days"
+                    ? html`
                         <label>
-                          Start date
+                          Interval days
                           <input
-                            type="date"
-                            .value=${skipWindow.start_date}
-                            @input=${this.handleSkipWindowText(index, "start_date")}
+                            type="number"
+                            min="1"
+                            .value=${String(this.formState.intervalDays)}
+                            @input=${this.handleNumberInput("intervalDays")}
                             required
                           />
                         </label>
-                      </div>
-                      <div class="row">
+                      `
+                    : html``}
+                  ${this.formState.frequency === "monthly"
+                    ? html`
                         <label>
-                          End date
+                          Day of month
                           <input
-                            type="date"
-                            .value=${skipWindow.end_date}
-                            @input=${this.handleSkipWindowText(index, "end_date")}
+                            type="number"
+                            min="1"
+                            max="31"
+                            .value=${String(this.formState.dayOfMonth)}
+                            @input=${this.handleNumberInput("dayOfMonth")}
                             required
                           />
                         </label>
-                      </div>
-                      <button
-                        class="inline-action"
-                        type="button"
-                        @click=${() => this.removeSkipWindow(index)}
-                      >
-                        Remove skip window
+                      `
+                    : html``}
+                  <label>
+                    Skip windows
+                    <div class="skip-window-list">
+                      ${this.formState.skipWindows.map(
+                        (skipWindow, index) => html`
+                          <div class="skip-window-card">
+                            <div class="row">
+                              <label>
+                                Label
+                                <input
+                                  .value=${skipWindow.label}
+                                  @input=${this.handleSkipWindowText(index, "label")}
+                                  placeholder="Vacation, renovation, travel"
+                                />
+                              </label>
+                              <label>
+                                Start date
+                                <input
+                                  type="date"
+                                  .value=${skipWindow.start_date}
+                                  @input=${this.handleSkipWindowText(index, "start_date")}
+                                  required
+                                />
+                              </label>
+                            </div>
+                            <div class="row">
+                              <label>
+                                End date
+                                <input
+                                  type="date"
+                                  .value=${skipWindow.end_date}
+                                  @input=${this.handleSkipWindowText(index, "end_date")}
+                                  required
+                                />
+                              </label>
+                            </div>
+                            <button
+                              class="inline-action"
+                              type="button"
+                              @click=${() => this.removeSkipWindow(index)}
+                            >
+                              Remove skip window
+                            </button>
+                          </div>
+                        `
+                      )}
+                      <button class="inline-action" type="button" @click=${this.addSkipWindow}>
+                        Add skip window
                       </button>
                     </div>
-                  `
-                )}
-                <button class="inline-action" type="button" @click=${this.addSkipWindow}>
-                  Add skip window
-                </button>
-              </div>
-            </label>
+                  </label>
+                `
+              : html``}
             <div class="actions">
               <button class="ghost" type="button" ?disabled=${this.saving} @click=${this.resetForm}>
                 Reset
@@ -740,10 +751,13 @@ export class TaskBuilderView extends LitElement {
     `;
   }
 
-  private startNewTask(): void {
+  private startNewTask(isOneOff: boolean = false): void {
     this.selectedTaskId = NEW_TASK_ID;
     this.localError = "";
     this.formState = emptyFormState(this.profiles);
+    if (isOneOff) {
+      this.formState.frequency = "none";
+    }
   }
 
   private selectTask(taskId: string): void {
@@ -875,7 +889,11 @@ export class TaskBuilderView extends LitElement {
 
   private resetForm(): void {
     if (this.selectedTaskId === NEW_TASK_ID) {
+      const wasOneOff = this.formState.frequency === "none";
       this.formState = emptyFormState(this.profiles);
+      if (wasOneOff) {
+        this.formState.frequency = "none";
+      }
     } else {
       const task = this.tasks.find((candidate) => candidate.id === this.selectedTaskId);
       if (task) {
@@ -944,12 +962,12 @@ export class TaskBuilderView extends LitElement {
         interval_days: this.formState.frequency === "custom_days" ? this.formState.intervalDays : 1,
         day_of_month: this.formState.frequency === "monthly" ? this.formState.dayOfMonth : null,
       },
-      skip_windows: this.formState.skipWindows.map((skipWindow) => ({
+      skip_windows: this.formState.frequency === "none" ? [] : this.formState.skipWindows.map((skipWindow) => ({
         ...skipWindow,
         label: skipWindow.label.trim(),
       })),
       assigned_profile_id: this.formState.assignedProfileId,
-      nfc_tag_id: this.formState.nfcTagId.trim() || null,
+      nfc_tag_id: this.formState.frequency === "none" ? null : (this.formState.nfcTagId.trim() || null),
       active: existingTask?.active ?? true,
       start_date: this.formState.startDate,
       created_at: existingTask?.created_at ?? nowIsoString,
