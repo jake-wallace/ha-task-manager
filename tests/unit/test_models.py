@@ -7,9 +7,10 @@ from custom_components.ha_task_manager.models import (
     AnalyticsBaselineResetRecord,
     AnalyticsBaselineState,
     ProfileAnalyticsSnapshot,
+    RecurrenceFrequency,
     SkipWindow,
-    TaskDeletionRecord,
     TaskDefinition,
+    TaskDeletionRecord,
     TaskDueInstance,
 )
 from custom_components.ha_task_manager.models.time import utc_now
@@ -92,3 +93,8 @@ def test_analytics_reset_record_captures_previous_baseline() -> None:
     assert record.previous_baseline_at is None
     assert record.new_baseline_at == now
     assert record.status == "active"
+
+
+def test_recurrence_frequency_has_none() -> None:
+    assert RecurrenceFrequency.NONE == "none"
+    assert "none" in list(RecurrenceFrequency)

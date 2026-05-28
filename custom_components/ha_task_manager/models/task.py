@@ -13,6 +13,7 @@ from .time import utc_now
 class RecurrenceFrequency(StrEnum):
     """Supported recurrence frequencies."""
 
+    NONE = "none"
     DAILY = "daily"
     WEEKLY = "weekly"
     MONTHLY = "monthly"
