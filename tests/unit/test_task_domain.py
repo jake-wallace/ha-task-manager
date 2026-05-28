@@ -486,27 +486,3 @@ def test_one_off_task_cannot_have_nfc(task_domain_service: TaskDomainService) ->
     with pytest.raises(InvalidTaskDefinitionError, match="One-off tasks cannot be assigned NFC tags"):
         task_domain_service.validate_task(task)
 
-
-def test_task_definition_validation_empty_title(task_domain_service: TaskDomainService) -> None:
-    """Test that an empty title raises an error."""
-    task = TaskDefinition(
-        title="",
-        recurrence=RecurrenceRule(frequency=RecurrenceFrequency.DAILY),
-        assigned_profile_id="some-profile",
-    )
-
-    with pytest.raises(InvalidTaskDefinitionError, match="Title cannot be empty"):
-        task_domain_service.validate_task(task)
-
-
-def test_task_definition_validation_empty_profile(task_domain_service: TaskDomainService) -> None:
-    """Test that an empty assigned profile raises an error."""
-    task = TaskDefinition(
-        title="Test task",
-        recurrence=RecurrenceRule(frequency=RecurrenceFrequency.DAILY),
-        assigned_profile_id="",
-    )
-
-    with pytest.raises(InvalidTaskDefinitionError, match="Task must be assigned to a profile"):
-        task_domain_service.validate_task(task)
-

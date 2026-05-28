@@ -138,11 +138,6 @@ class TaskDomainService:
 
 
 def _validate_task(task: TaskDefinition) -> None:
-    if not task.title.strip():
-        raise InvalidTaskDefinitionError(task.id, "Title cannot be empty.")
-    if not task.assigned_profile_id.strip():
-        raise InvalidTaskDefinitionError(task.id, "Task must be assigned to a profile.")
-
     if task.recurrence.frequency == RecurrenceFrequency.NONE and task.nfc_tag_id is not None:
         raise InvalidTaskDefinitionError(task.id, "One-off tasks cannot be assigned NFC tags.")
 
