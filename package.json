@@ -5,13 +5,12 @@
   "type": "module",
   "scripts": {
     "dev": "vite --port=3000 --host=0.0.0.0",
-    "build": "vite build",
+    "build": "vite build && node -e \"const fs = require('fs'); if (fs.existsSync('dist/task-scheduler-card.js')) fs.copyFileSync('dist/task-scheduler-card.js', 'task-scheduler-card.js'); if (fs.existsSync('dist/index.css')) fs.copyFileSync('dist/index.css', 'task-scheduler-card.css');\"",
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit"
   },
   "dependencies": {
-    "@google/genai": "^2.4.0",
     "@tailwindcss/vite": "^4.1.14",
     "@vitejs/plugin-react": "^5.0.4",
     "dotenv": "^17.2.3",

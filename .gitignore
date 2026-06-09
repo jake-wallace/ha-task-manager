@@ -1,0 +1,10 @@
+node_modules/
+build/
+coverage/
+.DS_Store
+*.log
+.env*
+!.env.example
+
+# Allow committing production build assets so HACS and Home Assistant can fetch task-scheduler-card.js & index.css
+!dist/
