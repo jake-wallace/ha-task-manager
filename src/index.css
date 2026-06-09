@@ -1,0 +1,68 @@
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&family=Inter:wght@400;500;600&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Plus Jakarta Sans", "Inter", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", monospace;
+  
+  --color-ha-blue: #2dd4bf;
+  --color-ha-orange: #f59e0b;
+  --color-ha-green: #10b981;
+  --color-ha-red: #ef4444;
+  --color-ha-bg-dark: #06100e;
+  --color-ha-card-dark: #0e201b;
+  --color-ha-border-dark: #1b3831;
+}
+
+@utility ha-glass {
+  background-color: rgba(24, 29, 44, 0.75);
+  backdrop-filter: blur(16px);
+  border: 1px solid rgba(42, 51, 77, 0.6);
+}
+
+@utility ha-glass-glow {
+  box-shadow: 0 0 25px rgba(3, 169, 244, 0.12);
+}
+
+@utility ha-glow-green {
+  box-shadow: 0 0 25px rgba(76, 175, 80, 0.2);
+}
+
+@utility ring-glow {
+  box-shadow: 0 0 15px currentColor;
+}
+
+/* Scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #020617;
+}
+::-webkit-scrollbar-thumb {
+  background: #1e293b;
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #6366f1;
+}
+
+@keyframes pulse-ring {
+  0% {
+    transform: scale(0.96);
+    opacity: 0.5;
+  }
+  50% {
+    transform: scale(1.04);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(0.96);
+    opacity: 0.5;
+  }
+}
+
+.animate-nfc-pulse {
+  animation: pulse-ring 2.5s infinite ease-in-out;
+}

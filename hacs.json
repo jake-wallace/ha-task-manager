@@ -1,8 +1,6 @@
 {
-  "name": "HA Task Manager",
-  "content_in_root": false,
-  "hide_default_branch": true,
-  "domains": [
-    "ha_task_manager"
-  ]
+  "name": "Home Assistant Task Scheduler",
+  "content_type": "lovelace",
+  "filename": "task-scheduler-card.js",
+  "render_templates": false
 }

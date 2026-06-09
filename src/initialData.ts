@@ -1,0 +1,365 @@
+/**
+ * @license
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+import { UserProfile, Task, NfcTag, CompletedLog } from './types';
+
+export const INITIAL_USERS: UserProfile[] = [
+  {
+    id: 'user-1',
+    name: 'Sarah (Mom)',
+    color: 'emerald',
+    icon: 'Brain',
+    role: 'parent',
+    streak: 6,
+    points: 340,
+    createdAt: '2026-05-01T12:00:00Z',
+  },
+  {
+    id: 'user-2',
+    name: 'David (Dad)',
+    color: 'sky',
+    icon: 'Wrench',
+    role: 'parent',
+    streak: 4,
+    points: 290,
+    createdAt: '2026-05-01T12:00:00Z',
+  },
+  {
+    id: 'user-3',
+    name: 'Liam (Kids)',
+    color: 'amber',
+    icon: 'Gamepad2',
+    role: 'child',
+    streak: 12,
+    points: 620,
+    createdAt: '2026-05-02T12:00:00Z',
+  },
+  {
+    id: 'user-4',
+    name: 'Emma (Kids)',
+    color: 'fuchsia',
+    icon: 'Cat',
+    role: 'child',
+    streak: 8,
+    points: 480,
+    createdAt: '2026-05-02T12:00:00Z',
+  },
+];
+
+export const INITIAL_NFC_TAGS: NfcTag[] = [
+  {
+    id: 'nfc-cat',
+    label: 'Cat Feeding Bowl Tag',
+    location: 'Kitchen Pantry Floor',
+    associatedTaskId: 'task-feed-cat',
+    scannedCount: 14,
+    lastScannedAt: '2026-06-08T08:15:00Z',
+    createdAt: '2026-05-05T09:00:00Z',
+  },
+  {
+    id: 'nfc-dishwasher',
+    label: 'Dishwasher Side Panel',
+    location: 'Kitchen Clean Counter',
+    associatedTaskId: 'task-empty-dishwasher',
+    scannedCount: 22,
+    lastScannedAt: '2026-06-08T18:40:00Z',
+    createdAt: '2026-05-05T09:30:00Z',
+  },
+  {
+    id: 'nfc-garden',
+    label: 'Greenhouse Door Hanger',
+    location: 'Backyard Greenhouse',
+    associatedTaskId: 'task-water-plants',
+    scannedCount: 8,
+    lastScannedAt: '2026-06-07T10:00:00Z',
+    createdAt: '2026-05-10T14:00:00Z',
+  },
+  {
+    id: 'nfc-recycle',
+    label: 'Blue Bin Lid',
+    location: 'Side Garage Entrance',
+    associatedTaskId: 'task-recycle-bins',
+    scannedCount: 5,
+    lastScannedAt: '2026-06-05T07:30:00Z',
+    createdAt: '2026-05-10T14:15:00Z',
+  },
+];
+
+export const INITIAL_TASKS: Task[] = [
+  {
+    id: 'task-feed-cat',
+    title: 'Feed Barnaby the Cat',
+    description: 'Give Barnaby half a can of wet food and top up his water bowl.',
+    type: 'recurring',
+    recurrence: {
+      frequency: 'daily',
+    },
+    dueDate: '2026-06-09',
+    dueTime: '08:00',
+    category: 'pets',
+    priority: 'high',
+    assignedTo: 'user-4', // Emma
+    points: 15,
+    nfcTagId: 'nfc-cat',
+    createdAt: '2026-05-05T10:00:00Z',
+    isCompleted: false,
+  },
+  {
+    id: 'task-empty-dishwasher',
+    title: 'Empty Kitchen Dishwasher',
+    description: 'Put all dry plates, glasses, pots and cutlery back into cabinets.',
+    type: 'recurring',
+    recurrence: {
+      frequency: 'daily',
+    },
+    dueDate: '2026-06-09',
+    dueTime: '18:00',
+    category: 'kitchen',
+    priority: 'medium',
+    assignedTo: 'user-3', // Liam
+    points: 20,
+    nfcTagId: 'nfc-dishwasher',
+    createdAt: '2026-05-05T10:00:00Z',
+    isCompleted: false,
+  },
+  {
+    id: 'task-water-plants',
+    title: 'Water Backyard Greenhouse',
+    description: 'Check soil moisture on cucumber and tomato patches. Water for 10 minutes.',
+    type: 'recurring',
+    recurrence: {
+      frequency: 'weekly',
+      weekdays: [2, 5], // Tue, Fri
+    },
+    dueDate: '2026-06-09', // Today is Tuesday (2026-06-09 is a Tuesday)
+    dueTime: '10:00',
+    category: 'garden',
+    priority: 'medium',
+    assignedTo: 'user-2', // David
+    points: 30,
+    nfcTagId: 'nfc-garden',
+    createdAt: '2026-05-10T14:00:00Z',
+    isCompleted: false,
+  },
+  {
+    id: 'task-recycle-bins',
+    title: 'Sort and Roll Out Recycle Bins',
+    description: 'Check kitchen recycling bin, flatten cardboard, and roll blue bins out to the curb.',
+    type: 'recurring',
+    recurrence: {
+      frequency: 'weekly',
+      weekdays: [4], // Thursdays
+    },
+    dueDate: '2026-06-11', // Thursday
+    dueTime: '19:00',
+    category: 'cleaning',
+    priority: 'medium',
+    assignedTo: 'user-1', // Sarah
+    points: 25,
+    nfcTagId: 'nfc-recycle',
+    createdAt: '2026-05-10T14:10:00Z',
+    isCompleted: false,
+  },
+  {
+    id: 'task-clean-mushrooms',
+    title: 'Deep Clean Coffee Grinder',
+    description: 'Disassemble coffee burrs and brush away stray grinds. Wipe bean hopper clean.',
+    type: 'recurring',
+    recurrence: {
+      frequency: 'monthly',
+      dayOfMonth: 1,
+    },
+    dueDate: '2026-07-01',
+    dueTime: '11:00',
+    category: 'kitchen',
+    priority: 'low',
+    assignedTo: 'user-1', // Sarah
+    points: 40,
+    createdAt: '2026-05-15T12:00:00Z',
+    isCompleted: false,
+  },
+  {
+    id: 'task-oneoff-1',
+    title: 'Assemble Bedroom Console Table',
+    description: 'Unpack the new walnut credenza box in master room and build it according to diagram.',
+    type: 'one-off',
+    dueDate: '2026-06-14',
+    dueTime: '15:00',
+    category: 'living_room',
+    priority: 'high',
+    assignedTo: 'user-2', // David
+    points: 100,
+    createdAt: '2026-06-08T11:00:00Z',
+    isCompleted: false,
+  },
+  {
+    id: 'task-oneoff-2',
+    title: 'Vacuum Living Room Accent Rugs',
+    description: 'Under coffee table and fireplace lounge chair. Remember to tap out dust first.',
+    type: 'one-off',
+    dueDate: '2026-06-09', // Today
+    dueTime: '17:00',
+    category: 'cleaning',
+    priority: 'low',
+    assignedTo: 'all',
+    points: 15,
+    createdAt: '2026-06-08T15:00:00Z',
+    isCompleted: false,
+  }
+];
+
+export const INITIAL_COMPLETED_LOGS: CompletedLog[] = [
+  // Day 1 to 7 seeding (Current day is June 9th, 2026, which is Tuesday)
+  // Mon June 8th
+  {
+    id: 'log-1',
+    taskId: 'task-feed-cat',
+    taskTitle: 'Feed Barnaby the Cat',
+    completedAt: '2026-06-08T08:15:00Z',
+    completedBy: 'user-4',
+    userName: 'Emma (Kids)',
+    category: 'pets',
+    pointsEarned: 15,
+    streakIncremented: true,
+  },
+  {
+    id: 'log-2',
+    taskId: 'task-empty-dishwasher',
+    taskTitle: 'Empty Kitchen Dishwasher',
+    completedAt: '2026-06-08T18:40:00Z',
+    completedBy: 'user-3',
+    userName: 'Liam (Kids)',
+    category: 'kitchen',
+    pointsEarned: 20,
+    streakIncremented: true,
+  },
+  // Sun June 7th
+  {
+    id: 'log-3',
+    taskId: 'task-feed-cat',
+    taskTitle: 'Feed Barnaby the Cat',
+    completedAt: '2026-06-07T08:05:00Z',
+    completedBy: 'user-4',
+    userName: 'Emma (Kids)',
+    category: 'pets',
+    pointsEarned: 15,
+    streakIncremented: true,
+  },
+  {
+    id: 'log-4',
+    taskId: 'task-water-plants',
+    taskTitle: 'Water Backyard Greenhouse',
+    completedAt: '2026-06-07T10:00:00Z',
+    completedBy: 'user-2',
+    userName: 'David (Dad)',
+    category: 'garden',
+    pointsEarned: 30,
+    streakIncremented: true,
+  },
+  // Sat June 6th
+  {
+    id: 'log-5',
+    taskId: 'task-feed-cat',
+    taskTitle: 'Feed Barnaby the Cat',
+    completedAt: '2026-06-06T08:30:00Z',
+    completedBy: 'user-4',
+    userName: 'Emma (Kids)',
+    category: 'pets',
+    pointsEarned: 15,
+    streakIncremented: true,
+  },
+  {
+    id: 'log-6',
+    taskId: 'task-oneoff-muffins',
+    taskTitle: 'Bake Sunday Prep Muffins',
+    completedAt: '2026-06-06T15:45:00Z',
+    completedBy: 'user-1',
+    userName: 'Sarah (Mom)',
+    category: 'kitchen',
+    pointsEarned: 35,
+    streakIncremented: false,
+  },
+  // Fri June 5th
+  {
+    id: 'log-7',
+    taskId: 'task-feed-cat',
+    taskTitle: 'Feed Barnaby the Cat',
+    completedAt: '2026-06-05T08:10:00Z',
+    completedBy: 'user-4',
+    userName: 'Emma (Kids)',
+    category: 'pets',
+    pointsEarned: 15,
+    streakIncremented: true,
+  },
+  {
+    id: 'log-8',
+    taskId: 'task-recycle-bins',
+    taskTitle: 'Sort and Roll Out Recycle Bins',
+    completedAt: '2026-06-05T07:30:00Z',
+    completedBy: 'user-1',
+    userName: 'Sarah (Mom)',
+    category: 'cleaning',
+    pointsEarned: 25,
+    streakIncremented: true,
+  },
+  // Thu June 4th
+  {
+    id: 'log-9',
+    taskId: 'task-feed-cat',
+    taskTitle: 'Feed Barnaby the Cat',
+    completedAt: '2026-06-04T08:00:00Z',
+    completedBy: 'user-1', // Mom fed him because Emma was asleep
+    userName: 'Sarah (Mom)',
+    category: 'pets',
+    pointsEarned: 15,
+    streakIncremented: true,
+  },
+  {
+    id: 'log-10',
+    taskId: 'task-empty-dishwasher',
+    taskTitle: 'Empty Kitchen Dishwasher',
+    completedAt: '2026-06-04T12:30:00Z',
+    completedBy: 'user-3',
+    userName: 'Liam (Kids)',
+    category: 'kitchen',
+    pointsEarned: 20,
+    streakIncremented: true,
+  },
+  // Wed June 3rd
+  {
+    id: 'log-11',
+    taskId: 'task-feed-cat',
+    taskTitle: 'Feed Barnaby the Cat',
+    completedAt: '2026-06-03T08:02:00Z',
+    completedBy: 'user-4',
+    userName: 'Emma (Kids)',
+    category: 'pets',
+    pointsEarned: 15,
+    streakIncremented: true,
+  },
+  // Tue June 2nd
+  {
+    id: 'log-12',
+    taskId: 'task-feed-cat',
+    taskTitle: 'Feed Barnaby the Cat',
+    completedAt: '2026-06-02T08:15:00Z',
+    completedBy: 'user-4',
+    userName: 'Emma (Kids)',
+    category: 'pets',
+    pointsEarned: 15,
+    streakIncremented: true,
+  },
+  {
+    id: 'log-13',
+    taskId: 'task-empty-dishwasher',
+    taskTitle: 'Empty Kitchen Dishwasher',
+    completedAt: '2026-06-02T19:00:00Z',
+    completedBy: 'user-3',
+    userName: 'Liam (Kids)',
+    category: 'kitchen',
+    pointsEarned: 20,
+    streakIncremented: true,
+  },
+];
