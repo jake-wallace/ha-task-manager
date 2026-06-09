@@ -1,0 +1,16 @@
+{
+  "short_name": "Task Scheduler",
+  "name": "Home Assistant Task Scheduler",
+  "icons": [
+    {
+      "src": "assets/.aistudio/generated_image_placeholder.png",
+      "type": "image/png",
+      "sizes": "192x192"
+    }
+  ],
+  "start_url": "/",
+  "background_color": "#0f172a",
+  "theme_color": "#4f46e5",
+  "display": "standalone",
+  "orientation": "any"
+}

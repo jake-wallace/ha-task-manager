@@ -90,6 +90,10 @@ export default function App({ hass, config }: { hass?: any; config?: any }) {
   const [disableDateSkipping, setDisableDateSkipping] = useState<boolean>(false);
   const [autoDetectHass, setAutoDetectHass] = useState<boolean>(true);
 
+  // Option A Notification Settings
+  const [sendNotifications, setSendNotifications] = useState<boolean>(true);
+  const [notificationTarget, setNotificationTarget] = useState<string>('notify.notify');
+
   // Read YAML config or localStorage resolved overrides
   const finalProductionMode = config?.production_mode !== undefined 
     ? (config.production_mode === true)
@@ -115,10 +119,14 @@ export default function App({ hass, config }: { hass?: any; config?: any }) {
     const storedProd = localStorage.getItem('ha_production_mode') === 'true';
     const storedDisableDate = localStorage.getItem('ha_disable_date_skipping') === 'true';
     const storedAutoDetect = localStorage.getItem('ha_auto_detect_hass') !== 'false';
+    const storedSendNotifications = localStorage.getItem('ha_send_notifications') !== 'false';
+    const storedNotificationTarget = localStorage.getItem('ha_notification_target') || 'notify.notify';
 
     setIsProductionMode(storedProd);
     setDisableDateSkipping(storedDisableDate);
     setAutoDetectHass(storedAutoDetect);
+    setSendNotifications(storedSendNotifications);
+    setNotificationTarget(storedNotificationTarget);
 
     const activeProd = config?.production_mode !== undefined ? (config.production_mode === true) : storedProd;
     const activeDisableDate = config?.disable_date_skipping !== undefined ? (config.disable_date_skipping === true) : storedDisableDate;
@@ -462,6 +470,24 @@ export default function App({ hass, config }: { hass?: any; config?: any }) {
 
     if (hasSoundEnabled) playBeep('success');
     triggerToast(`✨ Chore completed! ${activeExecutor.name} earned +${targetTask.points} stars!`, 'success');
+
+    // Option A: Active Home Assistant Companion App notify channel trigger
+    if (sendNotifications && hass) {
+      try {
+        const serviceName = notificationTarget.startsWith('notify.') 
+          ? notificationTarget.substring(7) 
+          : notificationTarget || 'notify';
+        
+        hass.callService('notify', serviceName, {
+          title: 'Chore Completed! ✨',
+          message: `${activeExecutor.name} completed the chore: "${targetTask.title}" and earned +${targetTask.points} rating stars!`
+        });
+        console.log(`Fired Home Assistant notify command: notify.${serviceName}`);
+      } catch (err) {
+        console.error('Home Assistant notify callback error:', err);
+      }
+    }
+
     return { success: true, taskTitle: targetTask.title, message: 'Chore ticked off successfully!' };
   };
 
@@ -602,6 +628,17 @@ export default function App({ hass, config }: { hass?: any; config?: any }) {
     setAutoDetectHass(val);
     localStorage.setItem('ha_auto_detect_hass', String(val));
     triggerToast(val ? "Home Assistant operator auto-sync enabled!" : "Home Assistant auto-sync disabled", "info");
+  };
+
+  const handleToggleSendNotifications = (val: boolean) => {
+    setSendNotifications(val);
+    localStorage.setItem('ha_send_notifications', String(val));
+    triggerToast(val ? "Push notification alerts enabled!" : "Push notification alerts disabled", "info");
+  };
+
+  const handleUpdateNotificationTarget = (target: string) => {
+    setNotificationTarget(target);
+    localStorage.setItem('ha_notification_target', target);
   };
 
   const handleWipeDatabase = () => {
@@ -1134,6 +1171,10 @@ export default function App({ hass, config }: { hass?: any; config?: any }) {
                     autoDetectHass={finalAutoDetectHass}
                     onToggleAutoDetectHass={handleToggleAutoDetectHass}
                     onClearAllData={handleWipeDatabase}
+                    sendNotifications={sendNotifications}
+                    onToggleSendNotifications={handleToggleSendNotifications}
+                    notificationTarget={notificationTarget}
+                    onUpdateNotificationTarget={handleUpdateNotificationTarget}
                   />
                 )}
 

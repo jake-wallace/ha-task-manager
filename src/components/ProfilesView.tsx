@@ -20,6 +20,10 @@ interface ProfilesViewProps {
   autoDetectHass?: boolean;
   onToggleAutoDetectHass?: (val: boolean) => void;
   onClearAllData?: () => void;
+  sendNotifications?: boolean;
+  onToggleSendNotifications?: (val: boolean) => void;
+  notificationTarget?: string;
+  onUpdateNotificationTarget?: (target: string) => void;
 }
 
 const AVATARS = [
@@ -43,7 +47,11 @@ export const ProfilesView: React.FC<ProfilesViewProps> = ({
   onToggleDisableDate,
   autoDetectHass = true,
   onToggleAutoDetectHass,
-  onClearAllData
+  onClearAllData,
+  sendNotifications = true,
+  onToggleSendNotifications,
+  notificationTarget = 'notify.notify',
+  onUpdateNotificationTarget
 }) => {
   const [name, setName] = useState('');
   const [role, setRole] = useState<'parent' | 'child' | 'guest'>('child');
@@ -309,6 +317,54 @@ export const ProfilesView: React.FC<ProfilesViewProps> = ({
             </button>
           </div>
         </div>
+
+        {/* Option A: Push Notifications Setup card */}
+        <div className="p-6 bg-slate-900 border border-slate-800 rounded-3xl shadow-xl mt-6">
+          <div className="flex items-center gap-2 mb-3 text-xs font-bold uppercase tracking-wider text-white">
+            <span className="p-1 px-1.5 bg-indigo-500/20 text-indigo-400 text-[9px] font-mono rounded mr-1">Option A</span>
+            Push Notifications (Companion App)
+          </div>
+          <p className="text-[11px] text-slate-400 mb-4 leading-relaxed">
+            Configure native push alerts to your mobile device. Because local Home Assistant can still make <strong>outbound</strong> connection requests, these companion app notifications work perfectly <strong>even when you are outside home</strong> on a local-only network!
+          </p>
+
+          <div className="space-y-4">
+            {/* Enable/Disable Notifications Toggle */}
+            <label className="flex items-start gap-3 p-3 rounded-2xl bg-slate-950 border border-slate-850 cursor-pointer select-none hover:border-slate-800 transition">
+              <input 
+                type="checkbox" 
+                checked={sendNotifications}
+                onChange={(e) => onToggleSendNotifications?.(e.target.checked)}
+                className="mt-0.5 rounded border-slate-800 text-indigo-500 focus:ring-0 bg-slate-900 focus:ring-offset-0 cursor-pointer"
+              />
+              <div>
+                <span className="font-bold text-slate-200 text-xs block">Allow Push Notifications</span>
+                <span className="text-[10px] text-slate-400 block leading-normal mt-0.5">
+                  Send a notification trigger to your phone whenever someone registers a checklist chore as completed.
+                </span>
+              </div>
+            </label>
+
+            {/* Notification Target Selector */}
+            {sendNotifications && (
+              <div className="space-y-1.5">
+                <label className="block text-slate-400 font-bold text-[10px] uppercase font-mono">Mobile App Target Service</label>
+                <input
+                  type="text"
+                  placeholder="e.g. notify.notify or notify.mobile_app_phone"
+                  value={notificationTarget}
+                  onChange={(e) => onUpdateNotificationTarget?.(e.target.value)}
+                  className="w-full px-4 py-2.5 bg-slate-950 border border-slate-850 rounded-2xl text-white outline-none focus:border-indigo-500 text-xs transition font-mono"
+                  id="notification-target-input"
+                />
+                <p className="text-[9px] text-slate-500 leading-normal">
+                  Defaults to <code className="text-slate-350">notify.notify</code>. You can customize this to target your specific phone (e.g. <code className="text-slate-350">notify.mobile_app_yourname_phone</code>).
+                </p>
+              </div>
+            )}
+          </div>
+        </div>
+
       </div>
 
     </div>

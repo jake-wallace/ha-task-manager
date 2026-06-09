@@ -41,12 +41,26 @@ class HomeAssistantTaskSchedulerCard extends HTMLElement {
 
   connectedCallback() {
     if (!this._root) {
-      // Inject standard HACS-linked tailwind CSS bundle if not present
+      // Inject standard dynamic CSS bundle relative to this card's script location if not present
       if (!document.getElementById('ha-task-scheduler-style')) {
         const link = document.createElement('link');
         link.id = 'ha-task-scheduler-style';
         link.rel = 'stylesheet';
-        link.href = '/local/community/home-assistant-task-scheduler/index.css';
+
+        // Retrieve current module path e.g. "/local/community/ha-task-manager/task-scheduler-card.js"
+        // and dynamically resolve the corresponding CSS filename in the exact same directory
+        let cssUrl = '/local/community/ha-task-manager/task-scheduler-card.css';
+        try {
+          const currentScript = document.currentScript as HTMLScriptElement;
+          const scriptSrc = currentScript?.src || import.meta.url;
+          if (scriptSrc) {
+            cssUrl = scriptSrc.replace(/\.js(\?.*)?$/, '.css$1');
+          }
+        } catch (e) {
+          console.warn('Could not auto-resolve CSS path, falling back to default:', e);
+        }
+
+        link.href = cssUrl;
         document.head.appendChild(link);
       }
 
