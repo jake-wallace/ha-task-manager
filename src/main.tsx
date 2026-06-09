@@ -2,6 +2,7 @@ import {StrictMode} from 'react';
 import {createRoot} from 'react-dom/client';
 import App from './App.tsx';
 import './index.css';
+import styles from './index.css?inline';
 
 // 1. Regular mounting for the AI Studio preview environment
 const rootEl = document.getElementById('root');
@@ -41,19 +42,6 @@ class HomeAssistantTaskSchedulerCard extends HTMLElement {
 
   connectedCallback() {
     if (!this._root) {
-      // Retrieve current module path e.g. "/local/community/ha-task-manager/task-scheduler-card.js"
-      // and dynamically resolve the corresponding CSS filename in the exact same directory
-      let cssUrl = '/local/community/ha-task-manager/task-scheduler-card.css';
-      try {
-        const currentScript = document.currentScript as HTMLScriptElement;
-        const scriptSrc = currentScript?.src || import.meta.url;
-        if (scriptSrc) {
-          cssUrl = scriptSrc.replace(/\.js(\?.*)?$/, '.css$1');
-        }
-      } catch (e) {
-        console.warn('Could not auto-resolve CSS path, falling back to default:', e);
-      }
-
       // Load fonts globally in the document's head to ensure they render correctly
       if (!document.getElementById('ha-task-scheduler-fonts')) {
         const fontLink = document.createElement('link');
@@ -66,11 +54,11 @@ class HomeAssistantTaskSchedulerCard extends HTMLElement {
       // Create Shadow Root on our element
       const shadow = this.attachShadow({ mode: 'open' });
 
-      // Inject the stylesheet directly into the Shadow Root (critical for Lovelace formatting)
-      const link = document.createElement('link');
-      link.rel = 'stylesheet';
-      link.href = cssUrl;
-      shadow.appendChild(link);
+      // Embed CSS styles directly inside the Shadow DOM for instant rendering
+      // This ensures 100% style coverage inside Home Assistant with zero external CSS file requirements!
+      const styleEl = document.createElement('style');
+      styleEl.textContent = styles;
+      shadow.appendChild(styleEl);
 
       // Create our React mount point inside the Shadow Root
       const mountPoint = document.createElement('div');
