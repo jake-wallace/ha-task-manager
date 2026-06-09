@@ -14,9 +14,10 @@ interface AnalyticsPanelProps {
   users: UserProfile[];
   logs: CompletedLog[];
   tasks: Task[];
+  isLovelace?: boolean;
 }
 
-export const AnalyticsPanel: React.FC<AnalyticsPanelProps> = ({ users, logs, tasks }) => {
+export const AnalyticsPanel: React.FC<AnalyticsPanelProps> = ({ users, logs, tasks, isLovelace = false }) => {
   // Aggregate stats
   const totalCompletions = logs.length;
   const totalPoints = users.reduce((sum, u) => sum + u.points, 0);
@@ -78,7 +79,7 @@ export const AnalyticsPanel: React.FC<AnalyticsPanelProps> = ({ users, logs, tas
     <div className="space-y-6" id="analytics-panel-container">
       
       {/* 4 OVERVIEW CHIP TILES */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className={`grid ${isLovelace ? 'grid-cols-1 sm:grid-cols-2' : 'grid-cols-2 lg:grid-cols-4'} gap-4`}>
         {/* STAT 1 */}
         <div className="p-5 bg-slate-900 border border-slate-800 rounded-3xl flex items-center gap-4 hover:border-slate-700 transition shadow-xl">
           <div className="w-12 h-12 rounded-2xl bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center text-indigo-400">
@@ -127,10 +128,10 @@ export const AnalyticsPanel: React.FC<AnalyticsPanelProps> = ({ users, logs, tas
           </div>
         </div>
       </div>      {/* MIDSECTION GRID */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 align-start">
+      <div className={`grid grid-cols-1 ${isLovelace ? '' : 'lg:grid-cols-3'} gap-6 align-start`}>
         
         {/* LEADERBOARD CARD */}
-        <div className="lg:col-span-1 p-6 bg-slate-900 border border-slate-800 rounded-3xl shadow-xl flex flex-col h-full justify-between">
+        <div className={`${isLovelace ? '' : 'lg:col-span-1'} p-6 bg-slate-900 border border-slate-800 rounded-3xl shadow-xl flex flex-col h-full justify-between`}>
           <div>
             <div className="flex items-center justify-between mb-5">
               <div className="flex items-center gap-2">
@@ -199,7 +200,7 @@ export const AnalyticsPanel: React.FC<AnalyticsPanelProps> = ({ users, logs, tas
         </div>
 
         {/* 7 DAYS PERFORMANCE BAR CHART */}
-        <div className="lg:col-span-2 p-6 bg-slate-900 border border-slate-800 rounded-3xl shadow-xl flex flex-col justify-between">
+        <div className={`${isLovelace ? '' : 'lg:col-span-2'} p-6 bg-slate-900 border border-slate-800 rounded-3xl shadow-xl flex flex-col justify-between`}>
           <div>
             <div className="flex items-center gap-2 mb-4">
               <div className="w-1.5 h-4 bg-indigo-500 rounded-full" />
@@ -260,10 +261,10 @@ export const AnalyticsPanel: React.FC<AnalyticsPanelProps> = ({ users, logs, tas
       </div>
 
       {/* BOTTOM METER: CATEGORIES BREAKDOWN & LOGS LIST */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 align-start">
+      <div className={`grid grid-cols-1 ${isLovelace ? '' : 'lg:grid-cols-3'} gap-6 align-start`}>
         
         {/* CATEGORY WORKLOAD BREAKDOWN METER */}
-        <div className="lg:col-span-1 p-6 bg-slate-900 border border-slate-800 rounded-3xl shadow-xl">
+        <div className={`${isLovelace ? '' : 'lg:col-span-1'} p-6 bg-slate-900 border border-slate-800 rounded-3xl shadow-xl`}>
           <div className="flex items-center gap-2 mb-5">
             <div className="w-1.5 h-4 bg-emerald-500 rounded-full" />
             <h3 className="text-sm font-semibold text-white uppercase tracking-wider font-sans">Task Effort by Category</h3>
@@ -312,7 +313,7 @@ export const AnalyticsPanel: React.FC<AnalyticsPanelProps> = ({ users, logs, tas
         </div>
 
         {/* RECENT HISTORIC CHORE LOGGERS */}
-        <div className="lg:col-span-2 p-6 bg-slate-900 border border-slate-800 rounded-3xl shadow-xl flex flex-col justify-between h-full">
+        <div className={`${isLovelace ? '' : 'lg:col-span-2'} p-6 bg-slate-900 border border-slate-800 rounded-3xl shadow-xl flex flex-col justify-between h-full`}>
           <div>
             <div className="flex items-center gap-2 mb-4">
               <div className="w-1.5 h-4 bg-rose-500 rounded-full" />

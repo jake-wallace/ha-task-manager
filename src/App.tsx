@@ -60,6 +60,8 @@ const getTodayLocalString = () => {
 };
 
 export default function App({ hass, config }: { hass?: any; config?: any }) {
+  const isLovelace = !!hass;
+
   // Navigation Screens: 'dashboard' | 'scheduler' | 'nfc' | 'analytics' | 'profiles'
   const [activeTab, setActiveTab] = useState<'dashboard' | 'scheduler' | 'nfc' | 'analytics' | 'profiles'>('dashboard');
 
@@ -680,17 +682,18 @@ export default function App({ hass, config }: { hass?: any; config?: any }) {
   const activeActor = users.find(u => u.id === activeUserId) || users[0];
 
   return (
-    <div className="min-h-screen bg-ha-bg-dark bg-gradient-to-br from-[#06100e] via-[#0b1c18] to-[#122c26] text-slate-100 font-sans flex flex-col justify-between relative overflow-hidden" id="applet-dashboard-canvas">
+    <div className={isLovelace ? "w-full bg-[#0a1815] rounded-3xl border border-ha-border-dark shadow-2xl overflow-hidden relative text-slate-100 font-sans flex flex-col justify-stretch p-3 md:p-5" : "min-h-screen bg-ha-bg-dark bg-gradient-to-br from-[#06100e] via-[#0b1c18] to-[#122c26] text-slate-100 font-sans flex flex-col justify-between relative overflow-hidden"} id="applet-dashboard-canvas">
       
       {/* Aurora Sage Glow Accents */}
       <div className="absolute -top-40 -right-40 w-[500px] h-[500px] bg-gradient-to-br from-teal-500/10 via-emerald-500/5 to-transparent rounded-full blur-3xl pointer-events-none" />
       <div className="absolute -bottom-40 -left-40 w-[400px] h-[400px] bg-gradient-to-tr from-teal-900/15 to-transparent rounded-full blur-2xl pointer-events-none" />
 
       {/* 2. CHORE WRAPPER PORTAL */}
-      <div className="flex-grow flex flex-col md:flex-row items-stretch p-4 gap-4 relative z-10">
+      <div className={isLovelace ? "flex-grow flex flex-col relative z-10" : "flex-grow flex flex-col md:flex-row items-stretch p-4 gap-4 relative z-10"}>
         
         {/* DESKTOP SIDEBAR RAIL */}
-        <aside className="hidden md:flex flex-col justify-between w-64 bg-ha-card-dark/70 border border-ha-border-dark rounded-3xl py-6 px-4 shrink-0 shadow-xl transition-all backdrop-blur-md">
+        {!isLovelace && (
+          <aside className="hidden md:flex flex-col justify-between w-64 bg-ha-card-dark/70 border border-ha-border-dark rounded-3xl py-6 px-4 shrink-0 shadow-xl transition-all backdrop-blur-md">
           <div className="space-y-6">
             
             {/* BRAND HEADER */}
@@ -804,9 +807,10 @@ export default function App({ hass, config }: { hass?: any; config?: any }) {
 
           </div>
         </aside>
+      )}
 
-        {/* MAIN CONTAINER STREAM */}
-        <main className="flex-1 flex flex-col p-2 md:p-4 space-y-6 max-h-[100vh] overflow-y-auto">
+      {/* MAIN CONTAINER STREAM */}
+      <main className={isLovelace ? "flex-1 flex flex-col space-y-6" : "flex-1 flex flex-col p-2 md:p-4 space-y-6 max-h-[100vh] overflow-y-auto"}>
           
           {/* HEADER ROW: ACTING SWITCHER */}
           <header className="flex flex-col lg:flex-row lg:items-end justify-between gap-4 pb-2">
@@ -845,6 +849,44 @@ export default function App({ hass, config }: { hass?: any; config?: any }) {
               </div>
             </div>
           </header>
+
+          {isLovelace && (
+            <div className="flex items-center gap-1.5 overflow-x-auto pb-3 border-b border-ha-border-dark/40 mb-2 scrollbar-none select-none">
+              <button
+                onClick={() => { if (hasSoundEnabled) playBeep('tap'); setActiveTab('dashboard'); }}
+                className={`px-3 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition flex items-center gap-1.5 border cursor-pointer ${activeTab === 'dashboard' ? 'bg-ha-blue/15 border-ha-blue/30 text-teal-300' : 'bg-ha-card-dark/45 border-transparent text-slate-400 hover:text-white'}`}
+              >
+                <ListTodo className="w-4 h-4" /> Checklist
+              </button>
+              <button
+                onClick={() => { if (hasSoundEnabled) playBeep('tap'); setActiveTab('scheduler'); }}
+                className={`px-3 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition flex items-center gap-1.5 border cursor-pointer ${activeTab === 'scheduler' ? 'bg-ha-blue/15 border-ha-blue/30 text-teal-300' : 'bg-ha-card-dark/45 border-transparent text-slate-400 hover:text-white'}`}
+              >
+                <Clock className="w-4 h-4" /> Scheduler
+              </button>
+              <button
+                onClick={() => { if (hasSoundEnabled) playBeep('tap'); setActiveTab('nfc'); }}
+                className={`px-3 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition flex items-center gap-1.5 border cursor-pointer relative ${activeTab === 'nfc' ? 'bg-ha-blue/15 border-ha-blue/30 text-teal-300' : 'bg-ha-card-dark/45 border-transparent text-slate-400 hover:text-white'}`}
+              >
+                <Zap className="w-4 h-4 text-teal-400" /> NFC Hub
+                <span className="px-1.5 py-0.5 bg-gradient-to-r from-teal-400 to-emerald-500 text-white font-extrabold text-[8px] tracking-wide rounded-full scale-90 -mr-1">
+                  NEW
+                </span>
+              </button>
+              <button
+                onClick={() => { if (hasSoundEnabled) playBeep('tap'); setActiveTab('analytics'); }}
+                className={`px-3 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition flex items-center gap-1.5 border cursor-pointer ${activeTab === 'analytics' ? 'bg-ha-blue/15 border-ha-blue/30 text-teal-300' : 'bg-ha-card-dark/45 border-transparent text-slate-400 hover:text-white'}`}
+              >
+                <TrendingUp className="w-4 h-4" /> Stats
+              </button>
+              <button
+                onClick={() => { if (hasSoundEnabled) playBeep('tap'); setActiveTab('profiles'); }}
+                className={`px-3 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition flex items-center gap-1.5 border cursor-pointer ${activeTab === 'profiles' ? 'bg-ha-blue/15 border-ha-blue/30 text-teal-300' : 'bg-ha-card-dark/45 border-transparent text-slate-400 hover:text-white'}`}
+              >
+                <Users className="w-4 h-4" /> Profiles
+              </button>
+            </div>
+          )}
 
           {/* ACTIVE SCREEN RENDERS */}
           <div className="flex-1">
@@ -908,10 +950,10 @@ export default function App({ hass, config }: { hass?: any; config?: any }) {
                     </div>
 
                     {/* TWO COLUMN GRID: ACTIVE TASKS CHECKLISTS & SMART ASSISTANT TILES */}
-                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 align-start">
+                    <div className={`grid grid-cols-1 ${isLovelace ? '' : 'lg:grid-cols-3'} gap-6 align-start`}>
                       
                       {/* CHORE WORKPLACE CHECKLISTS PANEL (2/3 col) */}
-                      <div className="lg:col-span-2 space-y-4">
+                      <div className={isLovelace ? 'space-y-4' : 'lg:col-span-2 space-y-4'}>
                         <div className="p-6 bg-slate-900 border border-slate-800 rounded-3xl min-h-[420px] flex flex-col justify-between shadow-2xl">
                           <div>
                             <div className="flex justify-between items-center mb-6">
@@ -1026,7 +1068,7 @@ export default function App({ hass, config }: { hass?: any; config?: any }) {
                       </div>
 
                       {/* QUICK QUICK ACTION BAR & DIRECT OVERVIEW (1/3 col) */}
-                      <div className="lg:col-span-1 space-y-6">
+                      <div className={isLovelace ? 'space-y-6' : 'lg:col-span-1 space-y-6'}>
                         
                         {/* CURRENT PROFILE SUMMARY */}
                         <div className="p-6 bg-slate-900 border border-slate-800 rounded-3xl shadow-xl">
@@ -1146,6 +1188,7 @@ export default function App({ hass, config }: { hass?: any; config?: any }) {
                     onCreateTag={handleCreateNfcTag}
                     onLinkTagToTask={handleLinkTagToTask}
                     onDeleteTag={handleDeleteNfcTag}
+                    isLovelace={isLovelace}
                   />
                 )}
 
@@ -1155,6 +1198,7 @@ export default function App({ hass, config }: { hass?: any; config?: any }) {
                     users={users}
                     logs={completedLogs}
                     tasks={tasks}
+                    isLovelace={isLovelace}
                   />
                 )}
 
@@ -1175,6 +1219,7 @@ export default function App({ hass, config }: { hass?: any; config?: any }) {
                     onToggleSendNotifications={handleToggleSendNotifications}
                     notificationTarget={notificationTarget}
                     onUpdateNotificationTarget={handleUpdateNotificationTarget}
+                    isLovelace={isLovelace}
                   />
                 )}
 
@@ -1219,38 +1264,40 @@ export default function App({ hass, config }: { hass?: any; config?: any }) {
       />
 
       {/* 5. RESPONSIVE BOTTOM MOBILE NAV BANNER */}
-      <nav className="md:hidden bg-[#0a1815] border-t border-ha-border-dark/60 flex items-center justify-around py-3 text-[10px] font-bold uppercase tracking-wider text-slate-500 z-20 sticky bottom-0 animate-fade-in">
-        <button
-          onClick={() => { if (hasSoundEnabled) playBeep('tap'); setActiveTab('dashboard'); }}
-          className={`flex flex-col items-center gap-1 transition ${activeTab === 'dashboard' ? 'text-ha-blue font-extrabold' : 'text-slate-400'}`}
-        >
-          <ListTodo className="w-5 h-5" /> Checklist
-        </button>
-        <button
-          onClick={() => { if (hasSoundEnabled) playBeep('tap'); setActiveTab('scheduler'); }}
-          className={`flex flex-col items-center gap-1 transition ${activeTab === 'scheduler' ? 'text-ha-blue font-extrabold' : 'text-slate-400'}`}
-        >
-          <Clock className="w-5 h-5" /> Scheduler
-        </button>
-        <button
-          onClick={() => { if (hasSoundEnabled) playBeep('tap'); setActiveTab('nfc'); }}
-          className={`flex flex-col items-center gap-1 transition relative ${activeTab === 'nfc' ? 'text-ha-blue font-extrabold' : 'text-slate-400'}`}
-        >
-          <Zap className="w-5 h-5" /> NFC Hub
-        </button>
-        <button
-          onClick={() => { if (hasSoundEnabled) playBeep('tap'); setActiveTab('analytics'); }}
-          className={`flex flex-col items-center gap-1 transition ${activeTab === 'analytics' ? 'text-ha-blue font-extrabold' : 'text-slate-400'}`}
-        >
-          <TrendingUp className="w-5 h-5" /> Stats
-        </button>
-        <button
-          onClick={() => { if (hasSoundEnabled) playBeep('tap'); setActiveTab('profiles'); }}
-          className={`flex flex-col items-center gap-1 transition ${activeTab === 'profiles' ? 'text-ha-blue font-extrabold' : 'text-slate-400'}`}
-        >
-          <Users className="w-5 h-5" /> Profiles
-        </button>
-      </nav>
+      {!isLovelace && (
+        <nav className="md:hidden bg-[#0a1815] border-t border-ha-border-dark/60 flex items-center justify-around py-3 text-[10px] font-bold uppercase tracking-wider text-slate-500 z-20 sticky bottom-0 animate-fade-in">
+          <button
+            onClick={() => { if (hasSoundEnabled) playBeep('tap'); setActiveTab('dashboard'); }}
+            className={`flex flex-col items-center gap-1 transition ${activeTab === 'dashboard' ? 'text-ha-blue font-extrabold' : 'text-slate-400'}`}
+          >
+            <ListTodo className="w-5 h-5" /> Checklist
+          </button>
+          <button
+            onClick={() => { if (hasSoundEnabled) playBeep('tap'); setActiveTab('scheduler'); }}
+            className={`flex flex-col items-center gap-1 transition ${activeTab === 'scheduler' ? 'text-ha-blue font-extrabold' : 'text-slate-400'}`}
+          >
+            <Clock className="w-5 h-5" /> Scheduler
+          </button>
+          <button
+            onClick={() => { if (hasSoundEnabled) playBeep('tap'); setActiveTab('nfc'); }}
+            className={`flex flex-col items-center gap-1 transition relative ${activeTab === 'nfc' ? 'text-ha-blue font-extrabold' : 'text-slate-400'}`}
+          >
+            <Zap className="w-5 h-5" /> NFC Hub
+          </button>
+          <button
+            onClick={() => { if (hasSoundEnabled) playBeep('tap'); setActiveTab('analytics'); }}
+            className={`flex flex-col items-center gap-1 transition ${activeTab === 'analytics' ? 'text-ha-blue font-extrabold' : 'text-slate-400'}`}
+          >
+            <TrendingUp className="w-5 h-5" /> Stats
+          </button>
+          <button
+            onClick={() => { if (hasSoundEnabled) playBeep('tap'); setActiveTab('profiles'); }}
+            className={`flex flex-col items-center gap-1 transition ${activeTab === 'profiles' ? 'text-ha-blue font-extrabold' : 'text-slate-400'}`}
+          >
+            <Users className="w-5 h-5" /> Profiles
+          </button>
+        </nav>
+      )}
 
     </div>
   );

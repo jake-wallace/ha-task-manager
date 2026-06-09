@@ -41,32 +41,42 @@ class HomeAssistantTaskSchedulerCard extends HTMLElement {
 
   connectedCallback() {
     if (!this._root) {
-      // Inject standard dynamic CSS bundle relative to this card's script location if not present
-      if (!document.getElementById('ha-task-scheduler-style')) {
-        const link = document.createElement('link');
-        link.id = 'ha-task-scheduler-style';
-        link.rel = 'stylesheet';
-
-        // Retrieve current module path e.g. "/local/community/ha-task-manager/task-scheduler-card.js"
-        // and dynamically resolve the corresponding CSS filename in the exact same directory
-        let cssUrl = '/local/community/ha-task-manager/task-scheduler-card.css';
-        try {
-          const currentScript = document.currentScript as HTMLScriptElement;
-          const scriptSrc = currentScript?.src || import.meta.url;
-          if (scriptSrc) {
-            cssUrl = scriptSrc.replace(/\.js(\?.*)?$/, '.css$1');
-          }
-        } catch (e) {
-          console.warn('Could not auto-resolve CSS path, falling back to default:', e);
+      // Retrieve current module path e.g. "/local/community/ha-task-manager/task-scheduler-card.js"
+      // and dynamically resolve the corresponding CSS filename in the exact same directory
+      let cssUrl = '/local/community/ha-task-manager/task-scheduler-card.css';
+      try {
+        const currentScript = document.currentScript as HTMLScriptElement;
+        const scriptSrc = currentScript?.src || import.meta.url;
+        if (scriptSrc) {
+          cssUrl = scriptSrc.replace(/\.js(\?.*)?$/, '.css$1');
         }
-
-        link.href = cssUrl;
-        document.head.appendChild(link);
+      } catch (e) {
+        console.warn('Could not auto-resolve CSS path, falling back to default:', e);
       }
 
+      // Load fonts globally in the document's head to ensure they render correctly
+      if (!document.getElementById('ha-task-scheduler-fonts')) {
+        const fontLink = document.createElement('link');
+        fontLink.id = 'ha-task-scheduler-fonts';
+        fontLink.rel = 'stylesheet';
+        fontLink.href = 'https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&family=Inter:wght@400;500;600&display=swap';
+        document.head.appendChild(fontLink);
+      }
+
+      // Create Shadow Root on our element
+      const shadow = this.attachShadow({ mode: 'open' });
+
+      // Inject the stylesheet directly into the Shadow Root (critical for Lovelace formatting)
+      const link = document.createElement('link');
+      link.rel = 'stylesheet';
+      link.href = cssUrl;
+      shadow.appendChild(link);
+
+      // Create our React mount point inside the Shadow Root
       const mountPoint = document.createElement('div');
       mountPoint.id = 'ha-task-scheduler-root';
-      this.appendChild(mountPoint);
+      shadow.appendChild(mountPoint);
+
       this._root = createRoot(mountPoint);
       this.renderReact();
     }

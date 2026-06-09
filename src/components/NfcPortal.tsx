@@ -16,6 +16,7 @@ interface NfcPortalProps {
   onCreateTag: (label: string, location: string, associatedTaskId?: string) => void;
   onLinkTagToTask: (tagId: string, taskId: string) => void;
   onDeleteTag: (tagId: string) => void;
+  isLovelace?: boolean;
 }
 
 export const NfcPortal: React.FC<NfcPortalProps> = ({
@@ -25,6 +26,7 @@ export const NfcPortal: React.FC<NfcPortalProps> = ({
   onCreateTag,
   onLinkTagToTask,
   onDeleteTag,
+  isLovelace = false,
 }) => {
   // Web NFC State
   const [isWebNfcSupported, setIsWebNfcSupported] = useState(false);
@@ -206,9 +208,9 @@ export const NfcPortal: React.FC<NfcPortalProps> = ({
   const untaggedTasks = tasks.filter(t => !t.nfcTagId);
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 align-start" id="nfc-portal-container">
+    <div className={`grid grid-cols-1 ${isLovelace ? '' : 'lg:grid-cols-3'} gap-6 align-start`} id="nfc-portal-container">
       {/* 1. NFC PHYSICAL WRITER / SCANNER CORE */}
-      <div className="lg:col-span-2 space-y-6">
+      <div className={isLovelace ? 'space-y-6' : 'lg:col-span-2 space-y-6'}>
         
         {/* PHYSICAL WEB NFC BOX */}
         <div className="p-6 bg-slate-900 border border-slate-800 rounded-3xl relative overflow-hidden shadow-xl">

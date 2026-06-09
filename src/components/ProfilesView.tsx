@@ -24,6 +24,7 @@ interface ProfilesViewProps {
   onToggleSendNotifications?: (val: boolean) => void;
   notificationTarget?: string;
   onUpdateNotificationTarget?: (target: string) => void;
+  isLovelace?: boolean;
 }
 
 const AVATARS = [
@@ -51,7 +52,8 @@ export const ProfilesView: React.FC<ProfilesViewProps> = ({
   sendNotifications = true,
   onToggleSendNotifications,
   notificationTarget = 'notify.notify',
-  onUpdateNotificationTarget
+  onUpdateNotificationTarget,
+  isLovelace = false
 }) => {
   const [name, setName] = useState('');
   const [role, setRole] = useState<'parent' | 'child' | 'guest'>('child');
@@ -81,10 +83,10 @@ export const ProfilesView: React.FC<ProfilesViewProps> = ({
   };
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 align-start" id="profiles-view-container">
+    <div className={`grid grid-cols-1 ${isLovelace ? '' : 'lg:grid-cols-3'} gap-6 align-start`} id="profiles-view-container">
       
       {/* LEFT: USERS DIRECTORY GRID (2/3 cols) */}
-      <div className="lg:col-span-2 space-y-6">
+      <div className={isLovelace ? 'space-y-6' : 'lg:col-span-2 space-y-6'}>
         <div className="p-6 bg-slate-900 border border-slate-800 rounded-3xl shadow-xl">
           <div className="flex items-center gap-3 mb-5">
             <div className="w-10 h-10 rounded-xl bg-indigo-500/10 border border-indigo-500/30 flex items-center justify-center text-indigo-400">
