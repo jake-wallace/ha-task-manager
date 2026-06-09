@@ -42,15 +42,6 @@ class HomeAssistantTaskSchedulerCard extends HTMLElement {
 
   connectedCallback() {
     if (!this._root) {
-      // Load fonts globally in the document's head to ensure they render correctly
-      if (!document.getElementById('ha-task-scheduler-fonts')) {
-        const fontLink = document.createElement('link');
-        fontLink.id = 'ha-task-scheduler-fonts';
-        fontLink.rel = 'stylesheet';
-        fontLink.href = 'https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&family=Inter:wght@400;500;600&display=swap';
-        document.head.appendChild(fontLink);
-      }
-
       // Create Shadow Root on our element
       const shadow = this.attachShadow({ mode: 'open' });
 

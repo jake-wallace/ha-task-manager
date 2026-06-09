@@ -682,7 +682,7 @@ export default function App({ hass, config }: { hass?: any; config?: any }) {
   const activeActor = users.find(u => u.id === activeUserId) || users[0];
 
   return (
-    <div className={isLovelace ? "w-full bg-[#0a1815] rounded-3xl border border-ha-border-dark shadow-2xl overflow-hidden relative text-slate-100 font-sans flex flex-col justify-stretch p-3 md:p-5" : "min-h-screen bg-ha-bg-dark bg-gradient-to-br from-[#06100e] via-[#0b1c18] to-[#122c26] text-slate-100 font-sans flex flex-col justify-between relative overflow-hidden"} id="applet-dashboard-canvas">
+    <div className={isLovelace ? "w-full bg-gradient-to-br from-[#06100e] via-[#0b1c18] to-[#122c26] rounded-3xl border border-ha-border-dark shadow-2xl overflow-hidden relative text-slate-100 font-sans flex flex-col justify-stretch p-4 md:p-6" : "min-h-screen bg-ha-bg-dark bg-gradient-to-br from-[#06100e] via-[#0b1c18] to-[#122c26] text-slate-100 font-sans flex flex-col justify-between relative overflow-hidden"} id="applet-dashboard-canvas">
       
       {/* Aurora Sage Glow Accents */}
       <div className="absolute -top-40 -right-40 w-[500px] h-[500px] bg-gradient-to-br from-teal-500/10 via-emerald-500/5 to-transparent rounded-full blur-3xl pointer-events-none" />
@@ -950,10 +950,10 @@ export default function App({ hass, config }: { hass?: any; config?: any }) {
                     </div>
 
                     {/* TWO COLUMN GRID: ACTIVE TASKS CHECKLISTS & SMART ASSISTANT TILES */}
-                    <div className={`grid grid-cols-1 ${isLovelace ? '' : 'lg:grid-cols-3'} gap-6 align-start`}>
+                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 align-start">
                       
                       {/* CHORE WORKPLACE CHECKLISTS PANEL (2/3 col) */}
-                      <div className={isLovelace ? 'space-y-4' : 'lg:col-span-2 space-y-4'}>
+                      <div className="lg:col-span-2 space-y-4">
                         <div className="p-6 bg-slate-900 border border-slate-800 rounded-3xl min-h-[420px] flex flex-col justify-between shadow-2xl">
                           <div>
                             <div className="flex justify-between items-center mb-6">
@@ -1068,7 +1068,7 @@ export default function App({ hass, config }: { hass?: any; config?: any }) {
                       </div>
 
                       {/* QUICK QUICK ACTION BAR & DIRECT OVERVIEW (1/3 col) */}
-                      <div className={isLovelace ? 'space-y-6' : 'lg:col-span-1 space-y-6'}>
+                      <div className="lg:col-span-1 space-y-6">
                         
                         {/* CURRENT PROFILE SUMMARY */}
                         <div className="p-6 bg-slate-900 border border-slate-800 rounded-3xl shadow-xl">
