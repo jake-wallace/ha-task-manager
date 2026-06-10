@@ -167,7 +167,7 @@ export function getCategoryLabel(category: string): string {
     case 'kitchen': return 'Kitchen 🍳';
     case 'living_room': return 'Living Room 🛋️';
     case 'cleaning': return 'Cleaning 🧹';
-    case 'kids': return 'Kids 🧸';
+    case 'kids': return 'Bedrooms 🛏️';
     case 'pets': return 'Pets 🐶';
     case 'garden': return 'Garden 🌿';
     case 'electronics': return 'Electronics ⚡';
@@ -180,7 +180,7 @@ export function getCategoryIconName(category: string): string {
     case 'kitchen': return 'Utensils';
     case 'living_room': return 'Tv';
     case 'cleaning': return 'Sparkles';
-    case 'kids': return 'Gamepad2';
+    case 'kids': return 'Bed';
     case 'pets': return 'Cat';
     case 'garden': return 'Leaf';
     case 'electronics': return 'Zap';

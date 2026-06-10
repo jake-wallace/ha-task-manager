@@ -290,6 +290,12 @@ export default function App({ hass, config }: { hass?: any; config?: any }) {
     triggerToast('Family profile removed.', 'alert');
   };
 
+  // Update a Profile settings (like notifications)
+  const handleUpdateUser = (updatedUser: UserProfile) => {
+    const updated = users.map(u => u.id === updatedUser.id ? updatedUser : u);
+    handleSetUsers(updated);
+  };
+
   // TASK SCHEDULE BUILDER
   const handleSaveNewTask = (taskData: Omit<Task, 'id' | 'isCompleted' | 'createdAt'>) => {
     const newTask: Task = {
@@ -476,15 +482,46 @@ export default function App({ hass, config }: { hass?: any; config?: any }) {
     // Option A: Active Home Assistant Companion App notify channel trigger
     if (sendNotifications && hass) {
       try {
-        const serviceName = notificationTarget.startsWith('notify.') 
+        // 1. Send to standard global fallback target
+        const fallbackService = notificationTarget.startsWith('notify.') 
           ? notificationTarget.substring(7) 
           : notificationTarget || 'notify';
         
-        hass.callService('notify', serviceName, {
+        hass.callService('notify', fallbackService, {
           title: 'Chore Completed! ✨',
           message: `${activeExecutor.name} completed the chore: "${targetTask.title}" and earned +${targetTask.points} rating stars!`
         });
-        console.log(`Fired Home Assistant notify command: notify.${serviceName}`);
+        console.log(`Fired global Home Assistant notify call on: notify.${fallbackService}`);
+
+        // 2. Loop through individual members for tailored custom notifications
+        users.forEach(u => {
+          // If no custom device notify service is configured, or it's identical to fallback, skip secondary firing
+          if (!u.notificationTarget || u.notificationTarget === notificationTarget) return;
+          
+          // Verify they haven't disabled completed notifications
+          const wantsAlerts = u.notifyOnCompleted ?? true;
+          if (!wantsAlerts) return;
+
+          // If they want alerts ONLY for chores assigned to them, verify the assignment match
+          if (u.notifyOnAssignedOnly) {
+            const isAssignedToThem = 
+              targetTask.assignedTo === 'all' || 
+              targetTask.assignedTo === u.id || 
+              targetTask.assignedTo === u.name;
+            if (!isAssignedToThem) return;
+          }
+
+          // Strip "notify." prefix if present
+          const customService = u.notificationTarget.startsWith('notify.') 
+            ? u.notificationTarget.substring(7) 
+            : u.notificationTarget;
+
+          hass.callService('notify', customService, {
+            title: `Chore Activity: ${u.name} 🔔`,
+            message: `${activeExecutor.name} completed: "${targetTask.title}" and won +${targetTask.points} rating stars.`
+          });
+          console.log(`Fired tailored notify command to ${u.name}'s device: notify.${customService}`);
+        });
       } catch (err) {
         console.error('Home Assistant notify callback error:', err);
       }
@@ -823,26 +860,30 @@ export default function App({ hass, config }: { hass?: any; config?: any }) {
               </h2>
             </div>
 
-            {/* UPPER PANEL: HORIZONTAL FAMILY MEMBER CAP SULE */}
-            <div className="p-1.5 bg-ha-card-dark/60 border border-ha-border-dark/55 rounded-full flex items-center gap-2 self-start lg:self-auto overflow-x-auto max-w-full backdrop-blur-md">
-              <span className="text-[9px] text-slate-500 font-bold uppercase tracking-wider shrink-0 pl-3 pr-2 border-r border-ha-border-dark leading-none">
+            {/* UPPER PANEL: HORIZONTAL FAMILY MEMBER CAPSULE */}
+            <div className="p-1.5 bg-[#0a1815] border border-[#1d3d34] rounded-full flex items-center gap-2 self-start lg:self-auto overflow-x-auto max-w-full backdrop-blur-md shadow-inner">
+              <span className="text-[9px] text-teal-400 font-extrabold uppercase tracking-widest shrink-0 pl-3.5 pr-2.5 border-r border-[#1d3d34] leading-none">
                 Active Member
               </span>
               
-              <div className="flex items-center gap-1">
+              <div className="flex items-center gap-1.5 pl-1">
                 {users.map(u => {
                   const isActive = u.id === activeUserId;
                   return (
                     <button
                       key={u.id}
                       onClick={() => handleSwitchActiveUser(u.id)}
-                      className={`px-3 py-1.5 rounded-full flex items-center gap-1.5 border transition cursor-pointer active:scale-95 ${isActive ? 'bg-gradient-to-r from-teal-400 to-emerald-500 border-emerald-500 text-white font-medium shadow-sm shadow-teal-400/10' : 'bg-transparent border-transparent text-slate-400 hover:text-slate-200'}`}
+                      className={`px-3 py-1.5 rounded-full flex items-center gap-1.5 border transition cursor-pointer active:scale-95 ${
+                        isActive 
+                          ? 'bg-gradient-to-r from-teal-450 to-emerald-550 border-emerald-500 text-white font-semibold shadow-md shadow-teal-500/25 ring-1 ring-emerald-400/40' 
+                          : 'bg-slate-950/50 border-slate-850/70 text-slate-300 hover:text-white hover:bg-slate-900/50'
+                      }`}
                       id={`switcher-member-${u.id}`}
                     >
-                      <div className="w-4 h-4 rounded-full border border-white/10 flex items-center justify-center text-white font-bold" style={{ backgroundColor: `${u.color === 'emerald' ? '#10b981' : u.color === 'sky' ? '#0284c7' : u.color === 'amber' ? '#f59e0b' : '#d946ef'}` }}>
-                        <IconRenderer name={u.icon} size={8} />
+                      <div className="w-4.5 h-4.5 rounded-full border border-white/15 flex items-center justify-center text-white font-bold" style={{ backgroundColor: `${u.color === 'emerald' ? '#10b981' : u.color === 'sky' ? '#0284c7' : u.color === 'amber' ? '#f59e0b' : '#d946ef'}` }}>
+                        <IconRenderer name={u.icon} size={9} />
                       </div>
-                      <span className="text-[10px] whitespace-nowrap font-semibold">{u.name.split(' ')[0]}</span>
+                      <span className="text-[10px] whitespace-nowrap font-bold tracking-wide">{u.name.split(' ')[0]}</span>
                     </button>
                   );
                 })}
@@ -1208,6 +1249,7 @@ export default function App({ hass, config }: { hass?: any; config?: any }) {
                     users={users}
                     onAddUser={handleAddNewUser}
                     onDeleteUser={handleDeleteUser}
+                    onUpdateUser={handleUpdateUser}
                     isProductionMode={finalProductionMode}
                     onToggleProduction={handleToggleProductionMode}
                     disableDateSkipping={finalDisableDateSkipping}

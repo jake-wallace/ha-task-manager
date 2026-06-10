@@ -7,12 +7,13 @@ import React, { useState } from 'react';
 import { UserProfile } from '../types';
 import { playBeep } from '../helpers';
 import { IconRenderer } from './IconRenderer';
-import { Plus, Users, Trash2, Award, Flame, Smile, ShieldAlert } from 'lucide-react';
+import { Plus, Users, Trash2, Award, Flame, Smile, ShieldAlert, Bell } from 'lucide-react';
 
 interface ProfilesViewProps {
   users: UserProfile[];
   onAddUser: (user: Omit<UserProfile, 'id' | 'streak' | 'points' | 'createdAt'>) => void;
   onDeleteUser: (id: string) => void;
+  onUpdateUser?: (user: UserProfile) => void;
   isProductionMode?: boolean;
   onToggleProduction?: (val: boolean) => void;
   disableDateSkipping?: boolean;
@@ -42,6 +43,7 @@ export const ProfilesView: React.FC<ProfilesViewProps> = ({
   users, 
   onAddUser, 
   onDeleteUser,
+  onUpdateUser,
   isProductionMode = false,
   onToggleProduction,
   disableDateSkipping = false,
@@ -60,6 +62,7 @@ export const ProfilesView: React.FC<ProfilesViewProps> = ({
   const [color, setColor] = useState('sky');
   const [icon, setIcon] = useState('Smile');
   const [error, setError] = useState('');
+  const [editingNotificationsUserId, setEditingNotificationsUserId] = useState<string | null>(null);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -112,36 +115,125 @@ export const ProfilesView: React.FC<ProfilesViewProps> = ({
               return (
                 <div
                   key={user.id}
-                  className={`p-5 rounded-3xl border flex flex-col justify-between h-44 transition duration-300 ${cardStyle}`}
+                  className={`p-5 rounded-3xl border flex flex-col justify-between h-auto min-h-44 transition duration-300 ${cardStyle}`}
                 >
-                  <div className="flex items-start justify-between gap-3 text-xs">
-                    <div className="flex items-center gap-3">
-                      {/* Avatar container */}
-                      <div
-                        className="w-12 h-12 rounded-full border border-white/20 flex items-center justify-center text-white shrink-0 shadow-lg"
-                        style={{ backgroundColor: accentColor }}
-                      >
-                        <IconRenderer name={user.icon} size={22} />
+                  <div className="space-y-4">
+                    <div className="flex items-start justify-between gap-3 text-xs">
+                      <div className="flex items-center gap-3">
+                        {/* Avatar container */}
+                        <div
+                          className="w-12 h-12 rounded-full border border-white/20 flex items-center justify-center text-white shrink-0 shadow-lg"
+                          style={{ backgroundColor: accentColor }}
+                        >
+                          <IconRenderer name={user.icon} size={22} />
+                        </div>
+
+                        {/* Header values */}
+                        <div>
+                          <h4 className="font-semibold text-white text-sm capitalize">{user.name}</h4>
+                          <span className="px-2 py-0.5 rounded-full text-[9px] font-bold tracking-wider uppercase bg-white/10 text-slate-300 mt-1 inline-block">
+                            {user.role === 'parent' || user.role === 'admin' ? 'Administrator' : 'Housemate'}
+                          </span>
+                        </div>
                       </div>
 
-                      {/* Header values */}
-                      <div>
-                        <h4 className="font-semibold text-white text-sm capitalize">{user.name}</h4>
-                        <span className="px-2 py-0.5 rounded-full text-[9px] font-bold tracking-wider uppercase bg-white/10 text-slate-350 mt-1 inline-block">
-                          {user.role} member
-                        </span>
-                      </div>
+                      {/* Delete button (except default parent) */}
+                      {users.length > 1 && (
+                        <button
+                          onClick={() => { playBeep('failure'); onDeleteUser(user.id); }}
+                          className="p-1.5 hover:bg-rose-500 hover:text-white text-slate-500 rounded-xl transition cursor-pointer"
+                          title={`Remove profile ${user.name}`}
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      )}
                     </div>
 
-                    {/* Delete button (except default parent) */}
-                    {users.length > 1 && (
-                      <button
-                        onClick={() => { playBeep('failure'); onDeleteUser(user.id); }}
-                        className="p-1.5 hover:bg-rose-500 hover:text-white text-slate-500 rounded-xl transition"
-                        title={`Remove profile ${user.name}`}
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
+                    {/* Expandable Notification Setup Trigger */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        playBeep('tap');
+                        setEditingNotificationsUserId(editingNotificationsUserId === user.id ? null : user.id);
+                      }}
+                      className={`w-full flex items-center justify-between py-1.5 px-3 rounded-xl text-[10px] font-bold border transition cursor-pointer ${
+                        editingNotificationsUserId === user.id 
+                          ? 'bg-indigo-650 border-indigo-500 text-indigo-300' 
+                          : 'bg-slate-950 border-slate-850 text-slate-400 hover:text-slate-200 hover:border-slate-800'
+                      }`}
+                    >
+                      <span className="flex items-center gap-1.5 pointer-events-none">
+                        <Bell className="w-3.5 h-3.5 text-indigo-400" />
+                        Configure Mobile App Push Alerts
+                      </span>
+                      <span className="text-[8px] font-mono shrink-0 px-1.5 py-0.5 bg-white/5 border border-white/10 rounded">
+                        {user.notificationTarget ? 'CUSTOM' : 'DEFAULT'}
+                      </span>
+                    </button>
+
+                    {/* Expandable Settings Column */}
+                    {editingNotificationsUserId === user.id && (
+                      <div className="p-3 bg-slate-950 border border-slate-850 rounded-2xl text-left space-y-3">
+                        <div className="space-y-1">
+                          <label className="block text-slate-400 font-bold text-[9px] uppercase font-mono tracking-wide">
+                            Notification Target Device / Service Name
+                          </label>
+                          <input
+                            type="text"
+                            placeholder="e.g. notify.mobile_app_sarah_phone"
+                            value={user.notificationTarget || ''}
+                            onChange={(e) => {
+                              onUpdateUser?.({
+                                ...user,
+                                notificationTarget: e.target.value
+                              });
+                            }}
+                            className="w-full px-3 py-2 bg-slate-900 border border-slate-800 rounded-xl text-white outline-none focus:border-indigo-500 text-xs transition font-mono"
+                          />
+                          <p className="text-[8px] text-slate-500">
+                            Specify your Home Assistant notify service (e.g., <code className="text-slate-400">notify.mobile_app_sarah_phone</code>).
+                          </p>
+                        </div>
+
+                        <div className="flex flex-col gap-2 pt-1 border-t border-slate-900">
+                          {/* Checked boxes */}
+                          <label className="flex items-start gap-2 cursor-pointer select-none">
+                            <input
+                              type="checkbox"
+                              checked={user.notifyOnCompleted ?? true}
+                              onChange={(e) => {
+                                onUpdateUser?.({
+                                  ...user,
+                                  notifyOnCompleted: e.target.checked
+                                });
+                              }}
+                              className="mt-0.5 rounded border-slate-800 text-indigo-500 focus:ring-0 bg-slate-900 cursor-pointer w-3.5 h-3.5 shrink-0"
+                            />
+                            <div className="leading-tight">
+                              <span className="text-[10px] text-slate-300 font-semibold block">Enable push alerts</span>
+                              <span className="text-[8px] text-slate-500 block">Get notified when chores are marked complete.</span>
+                            </div>
+                          </label>
+
+                          <label className="flex items-start gap-2 cursor-pointer select-none mt-1">
+                            <input
+                              type="checkbox"
+                              checked={user.notifyOnAssignedOnly ?? false}
+                              onChange={(e) => {
+                                onUpdateUser?.({
+                                  ...user,
+                                  notifyOnAssignedOnly: e.target.checked
+                                });
+                              }}
+                              className="mt-0.5 rounded border-slate-800 text-indigo-500 focus:ring-0 bg-slate-900 cursor-pointer w-3.5 h-3.5 shrink-0"
+                            />
+                            <div className="leading-tight">
+                              <span className="text-[10px] text-slate-300 font-semibold block">Restrict to my assigned chores</span>
+                              <span className="text-[8px] text-slate-505 block">Only trigger alerts for chores assigned to me.</span>
+                            </div>
+                          </label>
+                        </div>
+                      </div>
                     )}
                   </div>
 
@@ -158,7 +250,7 @@ export const ProfilesView: React.FC<ProfilesViewProps> = ({
                     <div className="flex items-center gap-1.5 text-orange-400 font-sans">
                       <Award className="w-4 h-4" />
                       <div>
-                        <span className="text-[9px] text-slate-505 block uppercase font-mono tracking-wide">Star Score</span>
+                        <span className="text-[9px] text-slate-550 block uppercase font-mono tracking-wide">Star Score</span>
                         <span className="font-bold text-xs">{user.points} Stars</span>
                       </div>
                     </div>
@@ -192,16 +284,16 @@ export const ProfilesView: React.FC<ProfilesViewProps> = ({
             </div>
 
             <div>
-              <label className="block text-slate-400 mb-1.5 font-bold text-[10px] uppercase font-mono">Family Role Type</label>
+              <label className="block text-slate-400 mb-1.5 font-bold text-[10px] uppercase font-mono">Account Core Role</label>
               <select
                 value={role}
                 onChange={(e) => setRole(e.target.value as any)}
                 className="w-full px-4 py-2.5 bg-slate-950 border border-slate-850 rounded-2xl text-slate-200 outline-none focus:border-indigo-505 text-xs transition"
                 id="profile-role-select"
               >
-                <option value="child">Child (Chore Runner)</option>
-                <option value="parent">Parent / Administrator</option>
-                <option value="guest">Guest / Temporal Resident</option>
+                <option value="child">Housemate / Member</option>
+                <option value="parent">Administrator</option>
+                <option value="guest">Guest / Temp Resident</option>
               </select>
             </div>
 

@@ -12,6 +12,9 @@ export interface UserProfile {
   streak: number;
   points: number;
   createdAt: string;
+  notificationTarget?: string; // e.g. notify.mobile_app_sarah_iphone
+  notifyOnCompleted?: boolean;  // notify this person when others complete chores
+  notifyOnAssignedOnly?: boolean; // restrict alerts only to tasks assigned to them
 }
 
 export type RecurrenceFrequency = 'daily' | 'weekly' | 'monthly' | 'interval';

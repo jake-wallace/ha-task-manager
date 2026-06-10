@@ -23,7 +23,7 @@ const CATEGORIES = [
   { id: 'kitchen', label: 'Kitchen', icon: 'Utensils', emoji: '🍳' },
   { id: 'living_room', label: 'Living Room', icon: 'Tv', emoji: '🛋️' },
   { id: 'cleaning', label: 'Cleaning', icon: 'Sparkles', emoji: '🧹' },
-  { id: 'kids', label: 'Kids', icon: 'Gamepad2', emoji: '🧸' },
+  { id: 'kids', label: 'Bedrooms', icon: 'Bed', emoji: '🛏️' },
   { id: 'pets', label: 'Pets', icon: 'Cat', emoji: '🐶' },
   { id: 'garden', label: 'Garden', icon: 'Leaf', emoji: '🌿' },
   { id: 'electronics', label: 'Electronics', icon: 'Zap', emoji: '⚡' },
