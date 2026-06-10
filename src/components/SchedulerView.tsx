@@ -7,13 +7,14 @@ import React, { useState } from 'react';
 import { Task, UserProfile } from '../types';
 import { getRecurrenceText, getCategoryLabel, getCategoryIconName, getPriorityStyles, playBeep } from '../helpers';
 import { IconRenderer } from './IconRenderer';
-import { Calendar, Trash2, ArrowRight, Award, Plus, Sparkles, Filter, Search, RotateCcw, FastForward, Play } from 'lucide-react';
+import { Calendar, Trash2, ArrowRight, Award, Plus, Sparkles, Filter, Search, RotateCcw, FastForward, Play, Edit2 } from 'lucide-react';
 
 interface SchedulerViewProps {
   tasks: Task[];
   users: UserProfile[];
   onDeleteTask: (id: string) => void;
   onOpenNewTaskModal: () => void;
+  onEditTask?: (task: Task) => void;
   currentSystemDate: string; // YYYY-MM-DD
   onAdvanceDays: (days: number) => void;
   disableDateSkipping?: boolean;
@@ -24,6 +25,7 @@ export const SchedulerView: React.FC<SchedulerViewProps> = ({
   users,
   onDeleteTask,
   onOpenNewTaskModal,
+  onEditTask,
   currentSystemDate,
   onAdvanceDays,
   disableDateSkipping = false,
@@ -207,13 +209,22 @@ export const SchedulerView: React.FC<SchedulerViewProps> = ({
                         <p className="text-xs text-slate-450 leading-relaxed mt-1">{task.description}</p>
                       </div>
 
-                      <button
-                        onClick={() => { playBeep('failure'); onDeleteTask(task.id); }}
-                        className="p-1.5 bg-rose-500/10 hover:bg-rose-500 text-rose-450 hover:text-white rounded-xl transition shrink-0"
-                        title="Delete scheduling task"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <button
+                          onClick={() => { playBeep('tap'); onEditTask?.(task); }}
+                          className="p-1.5 bg-[#172739] hover:bg-indigo-600 text-indigo-350 hover:text-white rounded-xl transition cursor-pointer"
+                          title="Modify task parameter list"
+                        >
+                          <Edit2 className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          onClick={() => { playBeep('failure'); onDeleteTask(task.id); }}
+                          className="p-1.5 bg-rose-500/10 hover:bg-rose-500 text-rose-450 hover:text-white rounded-xl transition cursor-pointer"
+                          title="Delete scheduling task"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
                     </div>
 
                     {/* Meta stats tags */}

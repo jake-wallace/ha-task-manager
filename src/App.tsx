@@ -76,6 +76,7 @@ export default function App({ hass, config }: { hass?: any; config?: any }) {
   // App UI States
   const [activeUserId, setActiveUserId] = useState<string>(''); // Set dynamically based on profiles or Home Assistant login
   const [isNewTaskModalOpen, setIsNewTaskModalOpen] = useState(false);
+  const [taskToEdit, setTaskToEdit] = useState<Task | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [categoryFilter, setCategoryFilter] = useState<string>('all');
   const [priorityFilter, setPriorityFilter] = useState<string>('all');
@@ -298,30 +299,62 @@ export default function App({ hass, config }: { hass?: any; config?: any }) {
 
   // TASK SCHEDULE BUILDER
   const handleSaveNewTask = (taskData: Omit<Task, 'id' | 'isCompleted' | 'createdAt'>) => {
-    const newTask: Task = {
-      ...taskData,
-      id: `task-${Date.now()}`,
-      isCompleted: false,
-      createdAt: new Date().toISOString(),
-    };
-    
-    // Check if task starting dueDate differs from currentSystemDate
-    // Under typical environment, its due date is as configured.
-    const updatedTasks = [...tasks, newTask];
-    handleSetTasks(updatedTasks);
-    
-    // If an NFC tag was linked, associate it
-    if (taskData.nfcTagId) {
+    if (taskToEdit) {
+      // Update existing task
+      const updatedTasks = tasks.map(t => {
+        if (t.id === taskToEdit.id) {
+          return {
+            ...t,
+            ...taskData
+          };
+        }
+        return t;
+      });
+      handleSetTasks(updatedTasks);
+
+      // Manage NFC tagging linkage
       const updatedTags = nfcTags.map(tag => {
+        // If it was associated with this task but is no longer linked: remove link
+        if (tag.associatedTaskId === taskToEdit.id && tag.id !== taskData.nfcTagId) {
+          const { associatedTaskId, ...rest } = tag;
+          return { ...rest, scannedCount: tag.scannedCount } as NfcTag;
+        }
+        // If it is now linked: add link
         if (tag.id === taskData.nfcTagId) {
-          return { ...tag, associatedTaskId: newTask.id };
+          return { ...tag, associatedTaskId: taskToEdit.id };
         }
         return tag;
       });
       handleSetTags(updatedTags);
-    }
 
-    triggerToast(`"${newTask.title}" is happily scheduled!`, 'success');
+      triggerToast(`"${taskData.title}" edited successfully!`, 'success');
+      setTaskToEdit(null);
+    } else {
+      const newTask: Task = {
+        ...taskData,
+        id: `task-${Date.now()}`,
+        isCompleted: false,
+        createdAt: new Date().toISOString(),
+      };
+      
+      // Check if task starting dueDate differs from currentSystemDate
+      // Under typical environment, its due date is as configured.
+      const updatedTasks = [...tasks, newTask];
+      handleSetTasks(updatedTasks);
+      
+      // If an NFC tag was linked, associate it
+      if (taskData.nfcTagId) {
+        const updatedTags = nfcTags.map(tag => {
+          if (tag.id === taskData.nfcTagId) {
+            return { ...tag, associatedTaskId: newTask.id };
+          }
+          return tag;
+        });
+        handleSetTags(updatedTags);
+      }
+
+      triggerToast(`"${newTask.title}" is happily scheduled!`, 'success');
+    }
   };
 
   // Delete task
@@ -678,6 +711,30 @@ export default function App({ hass, config }: { hass?: any; config?: any }) {
   const handleUpdateNotificationTarget = (target: string) => {
     setNotificationTarget(target);
     localStorage.setItem('ha_notification_target', target);
+  };
+
+  const handleSendTestNotification = (target: string, name?: string) => {
+    const serviceName = target.startsWith('notify.') 
+      ? target.substring(7) 
+      : target || 'notify';
+
+    const cleanName = name || 'Connected Device';
+    
+    if (hass) {
+      try {
+        hass.callService('notify', serviceName, {
+          title: 'Test Notification 🔔',
+          message: `This is a successful test push alert from your Family Chore & Task Scheduler for: ${cleanName}!`
+        });
+        triggerToast(`Test notification successfully sent in HA to: notify.${serviceName}!`, 'success');
+      } catch (err) {
+        console.error('Failed to trigger Home Assistant notify service:', err);
+        triggerToast(`Failed to trigger HA service call: notify.${serviceName}`, 'alert');
+      }
+    } else {
+      // In design preview sandbox (outside real HA)
+      triggerToast(`[HA Simulator] Push alert sent to notify.${serviceName} for: ${cleanName}!`, 'success');
+    }
   };
 
   const handleWipeDatabase = () => {
@@ -1213,7 +1270,12 @@ export default function App({ hass, config }: { hass?: any; config?: any }) {
                     tasks={tasks}
                     users={users}
                     onDeleteTask={handleDeleteTask}
-                    onOpenNewTaskModal={() => { if (hasSoundEnabled) playBeep('tap'); setIsNewTaskModalOpen(true); }}
+                    onOpenNewTaskModal={() => { if (hasSoundEnabled) playBeep('tap'); setTaskToEdit(null); setIsNewTaskModalOpen(true); }}
+                    onEditTask={(task) => {
+                      if (hasSoundEnabled) playBeep('tap');
+                      setTaskToEdit(task);
+                      setIsNewTaskModalOpen(true);
+                    }}
                     currentSystemDate={currentSystemDate}
                     onAdvanceDays={handleAdvanceDays}
                     disableDateSkipping={finalDisableDateSkipping}
@@ -1262,6 +1324,7 @@ export default function App({ hass, config }: { hass?: any; config?: any }) {
                     notificationTarget={notificationTarget}
                     onUpdateNotificationTarget={handleUpdateNotificationTarget}
                     isLovelace={isLovelace}
+                    onSendTestNotification={handleSendTestNotification}
                   />
                 )}
 
@@ -1298,11 +1361,12 @@ export default function App({ hass, config }: { hass?: any; config?: any }) {
       {/* 4. MODALS ROW */}
       <NewTaskModal
         isOpen={isNewTaskModalOpen}
-        onClose={() => setIsNewTaskModalOpen(false)}
+        onClose={() => { setIsNewTaskModalOpen(false); setTaskToEdit(null); }}
         onSave={handleSaveNewTask}
         users={users}
         nfcTags={nfcTags}
         onQuickRegisterNfc={handleCreateNfcTag}
+        taskToEdit={taskToEdit || undefined}
       />
 
       {/* 5. RESPONSIVE BOTTOM MOBILE NAV BANNER */}

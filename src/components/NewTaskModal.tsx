@@ -17,6 +17,7 @@ interface NewTaskModalProps {
   users: UserProfile[];
   nfcTags: NfcTag[];
   onQuickRegisterNfc: (label: string, location: string) => NfcTag;
+  taskToEdit?: Task;
 }
 
 const CATEGORIES = [
@@ -37,6 +38,7 @@ export const NewTaskModal: React.FC<NewTaskModalProps> = ({
   users,
   nfcTags,
   onQuickRegisterNfc,
+  taskToEdit,
 }) => {
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
@@ -143,6 +145,37 @@ export const NewTaskModal: React.FC<NewTaskModalProps> = ({
     onClose();
   };
 
+  React.useEffect(() => {
+    if (isOpen) {
+      if (taskToEdit) {
+        setTitle(taskToEdit.title);
+        setDescription(taskToEdit.description);
+        setTaskType(taskToEdit.type);
+        setDueDate(taskToEdit.dueDate ? taskToEdit.dueDate.slice(0, 10) : new Date().toISOString().slice(0, 10));
+        setDueTime(taskToEdit.dueTime || '12:00');
+        setCategory(taskToEdit.category);
+        setPriority(taskToEdit.priority);
+        setAssignedTo(taskToEdit.assignedTo || 'all');
+        setPoints(taskToEdit.points || 25);
+        if (taskToEdit.nfcTagId) {
+          setNfcAssociationType('existing');
+          setSelectedTagId(taskToEdit.nfcTagId);
+        } else {
+          setNfcAssociationType('none');
+          setSelectedTagId('');
+        }
+        if (taskToEdit.recurrence) {
+          setFrequency(taskToEdit.recurrence.frequency);
+          setWeekdays(taskToEdit.recurrence.weekdays || [1, 3, 5]);
+          setDayOfMonth(taskToEdit.recurrence.dayOfMonth || 1);
+          setIntervalDays(taskToEdit.recurrence.intervalDays || 3);
+        }
+      } else {
+        resetForm();
+      }
+    }
+  }, [isOpen, taskToEdit]);
+
   const resetForm = () => {
     setTitle('');
     setDescription('');
@@ -187,8 +220,12 @@ export const NewTaskModal: React.FC<NewTaskModalProps> = ({
               <Sparkles className="w-5 h-5" />
             </div>
             <div>
-              <h3 className="text-lg font-semibold text-white tracking-tight">Create Smart Task</h3>
-              <p className="text-xs text-slate-400">Schedule automatic tasks for your Home integration</p>
+              <h3 className="text-lg font-semibold text-white tracking-tight">
+                {taskToEdit ? 'Modify Chore Details' : 'Create Smart Task'}
+              </h3>
+              <p className="text-xs text-slate-400">
+                {taskToEdit ? 'Update recurrence, points, assigned runner, or bonded tags' : 'Schedule automatic tasks for your Home integration'}
+              </p>
             </div>
           </div>
           <button
@@ -546,10 +583,16 @@ export const NewTaskModal: React.FC<NewTaskModalProps> = ({
           </button>
           <button
             onClick={handleSubmit}
-            className="px-6 py-2.5 bg-ha-blue hover:bg-ha-blue/80 text-white font-semibold rounded-xl text-xs flex items-center gap-1.5 shadow-lg shadow-ha-blue/20 cursor-pointer active:scale-95 transition-all"
+            className="px-6 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white font-semibold rounded-xl text-xs flex items-center gap-1.5 shadow-lg shadow-indigo-600/20 cursor-pointer active:scale-95 transition-all"
             id="save-task-btn"
           >
-            <Plus className="w-4 h-4" /> Schedule Task
+            {taskToEdit ? (
+              <>Save Changes</>
+            ) : (
+              <>
+                <Plus className="w-4 h-4" /> Schedule Task
+              </>
+            )}
           </button>
         </div>
       </motion.div>

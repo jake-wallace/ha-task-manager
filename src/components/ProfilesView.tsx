@@ -26,6 +26,7 @@ interface ProfilesViewProps {
   notificationTarget?: string;
   onUpdateNotificationTarget?: (target: string) => void;
   isLovelace?: boolean;
+  onSendTestNotification?: (target: string, name?: string) => void;
 }
 
 const AVATARS = [
@@ -55,7 +56,8 @@ export const ProfilesView: React.FC<ProfilesViewProps> = ({
   onToggleSendNotifications,
   notificationTarget = 'notify.notify',
   onUpdateNotificationTarget,
-  isLovelace = false
+  isLovelace = false,
+  onSendTestNotification
 }) => {
   const [name, setName] = useState('');
   const [role, setRole] = useState<'parent' | 'child' | 'guest'>('child');
@@ -233,6 +235,20 @@ export const ProfilesView: React.FC<ProfilesViewProps> = ({
                             </div>
                           </label>
                         </div>
+
+                        {/* Test notification trigger button */}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            playBeep('success');
+                            onSendTestNotification?.(user.notificationTarget || 'notify.notify', user.name);
+                          }}
+                          className="w-full mt-2.5 py-2 bg-indigo-600 hover:bg-indigo-550 text-white rounded-xl text-[10px] font-bold transition flex items-center justify-center gap-1.5 cursor-pointer border border-indigo-550"
+                        >
+                          <Bell className="w-3.5 h-3.5 text-indigo-200" />
+                          Send Test Push Alert to {user.name}
+                        </button>
+
                       </div>
                     )}
                   </div>
@@ -441,19 +457,34 @@ export const ProfilesView: React.FC<ProfilesViewProps> = ({
 
             {/* Notification Target Selector */}
             {sendNotifications && (
-              <div className="space-y-1.5">
-                <label className="block text-slate-400 font-bold text-[10px] uppercase font-mono">Mobile App Target Service</label>
-                <input
-                  type="text"
-                  placeholder="e.g. notify.notify or notify.mobile_app_phone"
-                  value={notificationTarget}
-                  onChange={(e) => onUpdateNotificationTarget?.(e.target.value)}
-                  className="w-full px-4 py-2.5 bg-slate-950 border border-slate-850 rounded-2xl text-white outline-none focus:border-indigo-500 text-xs transition font-mono"
-                  id="notification-target-input"
-                />
-                <p className="text-[9px] text-slate-500 leading-normal">
-                  Defaults to <code className="text-slate-350">notify.notify</code>. You can customize this to target your specific phone (e.g. <code className="text-slate-350">notify.mobile_app_yourname_phone</code>).
-                </p>
+              <div className="space-y-2">
+                <div className="space-y-1.5">
+                  <label className="block text-slate-400 font-bold text-[10px] uppercase font-mono">Mobile App Target Service</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. notify.notify or notify.mobile_app_phone"
+                    value={notificationTarget}
+                    onChange={(e) => onUpdateNotificationTarget?.(e.target.value)}
+                    className="w-full px-4 py-2.5 bg-slate-950 border border-slate-850 rounded-2xl text-white outline-none focus:border-indigo-500 text-xs transition font-mono"
+                    id="notification-target-input"
+                  />
+                  <p className="text-[9px] text-slate-500 leading-normal">
+                    Defaults to <code className="text-slate-350">notify.notify</code>. You can customize this to target your specific phone (e.g. <code className="text-slate-350">notify.mobile_app_yourname_phone</code>).
+                  </p>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    playBeep('success');
+                    onSendTestNotification?.(notificationTarget || 'notify.notify', 'All Connected Devices');
+                  }}
+                  className="w-full mt-1.5 py-2.5 bg-indigo-600 hover:bg-indigo-550 text-white rounded-2xl text-[10px] font-bold transition flex items-center justify-center gap-1.5 cursor-pointer border border-indigo-550"
+                  id="send-global-test-notification-btn"
+                >
+                  <Bell className="w-3.5 h-3.5 text-indigo-200 animate-bounce" />
+                  Send Global Test Push Notification
+                </button>
               </div>
             )}
           </div>
